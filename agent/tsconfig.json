@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "resolveJsonModule": true,
+    "declaration": true
+  },
+  "include": [
+    "src/aave.ts",
+    "src/abis.ts",
+    "src/chain.ts",
+    "src/child.ts",
+    "src/control-server.ts",
+    "src/ipfs.ts",
+    "src/judge-flow.ts",
+    "src/lineage.ts",
+    "src/merchant-moe.ts",
+    "src/parent.ts",
+    "src/spawn-child.ts",
+    "src/swarm.ts",
+    "src/types.ts",
+    "src/venice.ts"
+  ]
+}

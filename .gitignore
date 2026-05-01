@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+node_modules/
+out/
+cache/
+.DS_Store
+agent/.next/
+judge_flow_state.json
