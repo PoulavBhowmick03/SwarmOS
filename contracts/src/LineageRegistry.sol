@@ -4,8 +4,12 @@ pragma solidity ^0.8.20;
 contract LineageRegistry {
     mapping(string => string[]) private lineageCIDs;
     mapping(string => uint256) public generation;
+    address public owner;
+    mapping(address => bool) public allowedCallers;
 
     event LineageUpdated(string indexed lineageKey, string cid, uint256 generation, uint256 timestamp);
+    event CallerAllowed(address indexed caller);
+    event CallerRevoked(address indexed caller);
     event GenerationResult(
         string indexed lineageKey,
         string summary,
@@ -15,7 +19,36 @@ contract LineageRegistry {
         uint256 timestamp
     );
 
-    function pushCID(string calldata lineageKey, string calldata cid) external {
+    error NotAllowed();
+    error ZeroAddress();
+
+    constructor() {
+        owner = msg.sender;
+        allowedCallers[msg.sender] = true;
+    }
+
+    modifier onlyAllowed() {
+        if (!allowedCallers[msg.sender]) revert NotAllowed();
+        _;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
+    }
+
+    function allowCaller(address caller) external onlyOwner {
+        if (caller == address(0)) revert ZeroAddress();
+        allowedCallers[caller] = true;
+        emit CallerAllowed(caller);
+    }
+
+    function revokeCaller(address caller) external onlyOwner {
+        allowedCallers[caller] = false;
+        emit CallerRevoked(caller);
+    }
+
+    function pushCID(string calldata lineageKey, string calldata cid) external onlyAllowed {
         lineageCIDs[lineageKey].push(cid);
         generation[lineageKey]++;
         emit LineageUpdated(lineageKey, cid, generation[lineageKey], block.timestamp);
@@ -27,7 +60,7 @@ contract LineageRegistry {
         uint256 avgYieldBps,
         uint256 agentsTerminated,
         uint256 generationNumber
-    ) external {
+    ) external onlyAllowed {
         emit GenerationResult(
             lineageKey, veniceGeneratedSummary, avgYieldBps, agentsTerminated, generationNumber, block.timestamp
         );
