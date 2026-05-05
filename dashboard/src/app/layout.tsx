@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Syne } from "next/font/google";
 import "./globals.css";
-import { Navbar } from "@/components/Navbar";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 
@@ -31,8 +30,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${display.variable} ${mono.variable}`}>
       <body>
-        <Navbar />
-        <main className="shell">{children}</main>
+        {children}
         <Analytics />
         <SpeedInsights />
       </body>

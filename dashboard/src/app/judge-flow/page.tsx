@@ -1,5 +1,6 @@
 "use client";
 
+import { Navbar } from "@/components/Navbar";
 import { TerminationEvent } from "@/components/TerminationEvent";
 import { useSwarmEvents } from "@/hooks/useSwarmData";
 import { explorerTx, formatPct, formatTime, ipfsUrl, type SwarmEvent } from "@/lib/mantle";
@@ -26,6 +27,8 @@ export default function JudgeFlowPage() {
   }, [events, typeFilter, lineageFilter]);
 
   return (
+    <>
+    <Navbar />
     <div className="dashboard-shell">
       <section className="rounded-[34px] border border-white/10 bg-[linear-gradient(135deg,rgba(88,217,255,0.16),rgba(8,17,31,0.94)_38%,rgba(5,10,19,0.98))] p-8">
         <p className="font-mono text-[11px] uppercase tracking-[0.32em] text-[#a8f3ff]/70">
@@ -156,5 +159,6 @@ export default function JudgeFlowPage() {
         ) : null}
       </section>
     </div>
+    </>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { Navbar } from "@/components/Navbar";
 import { GenerationChart } from "@/components/GenerationChart";
 import { useGenerationStats } from "@/hooks/useSwarmData";
 import { formatPct } from "@/lib/mantle";
@@ -10,7 +11,9 @@ export default function LineagePage() {
   const latest = generations[generations.length - 1];
 
   return (
-    <div className="dashboard-shell">
+    <>
+      <Navbar />
+      <div className="dashboard-shell">
       <section className="rounded-[34px] border border-white/10 bg-[linear-gradient(135deg,rgba(120,255,225,0.12),rgba(8,17,31,0.95)_36%,rgba(5,10,19,0.98))] p-8">
         <p className="font-mono text-[11px] uppercase tracking-[0.32em] text-[#b9fff2]/65">
           Ancestor Memory
@@ -59,6 +62,7 @@ export default function LineagePage() {
             : "Waiting for enough swarm history to compare generations."}
         </section>
       ) : null}
-    </div>
+      </div>
+    </>
   );
 }
