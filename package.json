@@ -1,0 +1,22 @@
+{
+  "name": "swarmos",
+  "private": true,
+  "workspaces": [
+    "dashboard",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:program": "cd programs/swarm-os && anchor build",
+    "deploy:program": "cd programs/swarm-os && anchor deploy --provider.cluster devnet",
+    "dev:oracle": "cd packages/scoring-oracle && npm run dev",
+    "dev:dashboard": "cd dashboard && npm run dev",
+    "start:swarm": "cd packages/agent-runtime && npx ts-node src/parent.ts"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "chai": "^6.2.2",
+    "mocha": "^11.7.5",
+    "ts-mocha": "^11.1.0"
+  }
+}
