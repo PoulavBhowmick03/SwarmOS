@@ -18,6 +18,8 @@ pnpm-debug.log*
 *-keypair.json
 packages/agent-runtime/.agent-wallets/
 packages/agent-runtime/.lineage-memory/
+packages/agent-runtime/.swarm-authorities/
+packages/agent-runtime/.archive/
 
 .DS_Store
 

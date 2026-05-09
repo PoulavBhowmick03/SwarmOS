@@ -69,7 +69,10 @@ export class ChildAgent {
       const text = await runVeniceTask(systemPrompt, userPrompt, {
         model: process.env.VENICE_AGENT_MODEL || process.env.VENICE_MODEL,
         temperature: 0.2,
-        maxTokens: 1200
+        maxTokens: 1800,
+        responseFormat: 'json_object',
+        disableReasoning: true,
+        label: `agent ${this.agentId} task execution`
       })
 
       if (text) {

@@ -1,9 +1,10 @@
 import { TaskType } from './types'
 
 const DEFAULT_VENICE_BASE_URL = 'https://api.venice.ai/api/v1'
-const DEFAULT_VENICE_MODEL = 'zai-org-glm-5'
+const DEFAULT_VENICE_MODEL = 'zai-org-glm-5-1'
 
 type VeniceRole = 'system' | 'user' | 'assistant'
+type VeniceReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 interface VeniceMessage {
   role: VeniceRole
@@ -14,6 +15,10 @@ interface VeniceChatOptions {
   model?: string
   temperature?: number
   maxTokens?: number
+  responseFormat?: 'json_object'
+  disableReasoning?: boolean
+  reasoningEffort?: VeniceReasoningEffort
+  label?: string
 }
 
 export interface LineagePostMortemInput {
@@ -93,7 +98,13 @@ export async function generateVenicePostMortem(
           `}`
       }
     ],
-    { temperature: 0.1, maxTokens: 650 }
+    {
+      temperature: 0.1,
+      maxTokens: 900,
+      responseFormat: 'json_object',
+      disableReasoning: true,
+      label: 'lineage post-mortem'
+    }
   )
 
   if (!content) return null
@@ -125,7 +136,13 @@ export async function synthesizeVeniceLineageLessons(
           `{"lessons":["<actionable lineage lesson>", "<lesson>"]}`
       }
     ],
-    { temperature: 0.15, maxTokens: 800 }
+    {
+      temperature: 0.15,
+      maxTokens: 1000,
+      responseFormat: 'json_object',
+      disableReasoning: true,
+      label: 'lineage lesson synthesis'
+    }
   )
 
   if (!content) return null
@@ -153,7 +170,7 @@ export async function runVeniceTask(
 }
 
 export function parseJsonObject<T>(raw: string): T | null {
-  const clean = raw.replace(/```json|```/gi, '').trim()
+  const clean = stripThinkingBlocks(raw).replace(/```(?:json)?|```/gi, '').trim()
   const match = clean.match(/\{[\s\S]*\}/)
   if (!match) return null
 
@@ -182,6 +199,41 @@ async function callVeniceChat(
 
   const baseUrl = (process.env.VENICE_BASE_URL || DEFAULT_VENICE_BASE_URL).replace(/\/$/, '')
   const model = options.model || process.env.VENICE_MODEL || DEFAULT_VENICE_MODEL
+  const maxCompletionTokens = options.maxTokens ?? 800
+  const disableReasoning =
+    options.disableReasoning ??
+    process.env.VENICE_DISABLE_REASONING !== 'false'
+  const reasoningEffort = options.reasoningEffort ?? parseReasoningEffort(
+    process.env.VENICE_REASONING_EFFORT
+  )
+
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+    temperature: options.temperature ?? 0.2,
+    max_completion_tokens: maxCompletionTokens,
+    max_tokens: maxCompletionTokens,
+    n: 1,
+    venice_parameters: {
+      strip_thinking_response: true,
+      disable_thinking: disableReasoning,
+      enable_web_search: 'off',
+      enable_web_scraping: false,
+      enable_web_citations: false,
+      include_venice_system_prompt: false
+    }
+  }
+
+  if (options.responseFormat === 'json_object') {
+    body.response_format = { type: 'json_object' }
+  }
+
+  if (disableReasoning) {
+    body.reasoning = { enabled: false }
+  } else if (reasoningEffort) {
+    body.reasoning_effort = reasoningEffort
+    body.reasoning = { effort: reasoningEffort }
+  }
 
   try {
     const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -190,12 +242,7 @@ async function callVeniceChat(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: options.temperature ?? 0.2,
-        max_tokens: options.maxTokens ?? 800
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(Number(process.env.VENICE_TIMEOUT_MS ?? 30_000))
     })
 
@@ -205,13 +252,54 @@ async function callVeniceChat(
     }
 
     const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
+      choices?: Array<{
+        finish_reason?: string
+        stop_reason?: string | null
+        message?: { content?: string; reasoning_content?: string | null }
+      }>
+      usage?: {
+        completion_tokens?: number
+        completion_tokens_details?: { reasoning_tokens?: number }
+      }
     }
-    return data.choices?.[0]?.message?.content?.trim() || null
+    const choice = data.choices?.[0]
+    const content = stripThinkingBlocks(choice?.message?.content ?? '').trim()
+
+    if (!content) {
+      const reason = choice?.finish_reason ?? choice?.stop_reason ?? 'unknown'
+      const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens
+      console.warn(
+        `[Venice] ${options.label ?? 'chat'} returned no visible content ` +
+          `(finish=${reason}, reasoning_tokens=${reasoningTokens ?? 'n/a'})`
+      )
+      return null
+    }
+
+    return content
   } catch (error) {
-    console.warn(`[Venice] lineage analysis unavailable: ${errorMessage(error)}`)
+    console.warn(`[Venice] ${options.label ?? 'chat'} unavailable: ${errorMessage(error)}`)
     return null
   }
+}
+
+function parseReasoningEffort(value: string | undefined): VeniceReasoningEffort | undefined {
+  const normalized = value?.trim().toLowerCase()
+  switch (normalized) {
+    case 'none':
+    case 'minimal':
+    case 'low':
+    case 'medium':
+    case 'high':
+    case 'xhigh':
+    case 'max':
+      return normalized
+    default:
+      return undefined
+  }
+}
+
+function stripThinkingBlocks(value: string): string {
+  return value.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
 }
 
 function normalizePostMortem(value: LineagePostMortem | null): LineagePostMortem | null {

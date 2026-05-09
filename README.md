@@ -227,6 +227,8 @@ cp .env.example .env
 
 Lineage memories keep the same on-chain PDA/hash shape, but the agent runtime now stores the mock off-chain payload locally under `packages/agent-runtime/.lineage-memory/` and, when `VENICE_API_KEY` is set, asks Venice to turn failures into compact post-mortems before injecting them into the next generation. Tune `LINEAGE_CONTEXT_RULES`, `LINEAGE_RAW_MEMORY_LIMIT`, and `LINEAGE_PROMPT_MAX_CHARS` if prompts get too large.
 
+For Venice-powered runs, the runtime uses JSON mode and disables visible reasoning by default so reasoning tokens do not crowd out the JSON answer. Override with `VENICE_DISABLE_REASONING=false` and `VENICE_REASONING_EFFORT=low|medium|high` if you explicitly want model-side reasoning.
+
 ### Run Oracle
 
 ```bash
@@ -249,6 +251,15 @@ npm run dev
 cd packages/agent-runtime
 npx ts-node src/parent.ts --task yield-optimizer --agents 5 --generations 3
 ```
+
+To archive old local generation state and start from a fresh swarm authority:
+
+```bash
+npm run reset:swarm-local
+npm run start:swarm:fresh -- --task yield-optimizer --agents 5 --generations 3
+```
+
+The fresh command creates an ignored authority keypair under `packages/agent-runtime/.swarm-authorities/`, funds it from the configured wallet when possible, and writes the new `NEXT_PUBLIC_SWARM_ADDRESS` into the local env files.
 
 ---
 

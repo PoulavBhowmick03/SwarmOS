@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "scripts": {
     "start": "ts-node src/parent.ts",
+    "fresh": "ts-node src/parent.ts --fresh --write-env",
+    "reset-local": "ts-node src/parent.ts --reset-local-all",
     "reclaim-dead": "ts-node src/parent.ts --reclaim-dead",
     "build": "tsc"
   },

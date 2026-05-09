@@ -37,6 +37,8 @@ const DEFAULT_PROGRAM_ID = 'D9moMaWzJw3LVxnZkiXS7xrTUHmF4n3hJeDWCvbB7B1a'
 const DEVNET_USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
 const DEFAULT_ORACLE_WALLET = path.join(REPO_ROOT, 'packages/scoring-oracle/oracle-keypair.json')
 const AGENT_WALLET_DIR = path.join(REPO_ROOT, 'packages/agent-runtime/.agent-wallets')
+const SWARM_AUTHORITY_DIR = path.join(REPO_ROOT, 'packages/agent-runtime/.swarm-authorities')
+const STATE_ARCHIVE_DIR = path.join(REPO_ROOT, 'packages/agent-runtime/.archive')
 
 type ReclaimableAgentWallet = Pick<ChildAgent, 'agentId' | 'wallet'>
 
@@ -793,10 +795,7 @@ export class ParentAgent {
   }
 
   private lineageStoreDir(): string {
-    const base = process.env.LINEAGE_MEMORY_DIR
-      ? resolveConfigPath(process.env.LINEAGE_MEMORY_DIR)
-      : path.join(REPO_ROOT, 'packages/agent-runtime/.lineage-memory')
-    return path.join(base, this.swarmAddress ?? 'uninitialized')
+    return path.join(lineageMemoryRootDir(), this.swarmAddress ?? 'uninitialized')
   }
 
   private requireSwarmAddress(): string {
@@ -955,10 +954,81 @@ function expandHome(filePath: string): string {
   return filePath
 }
 
-function loadWalletFromEnv(): Keypair {
-  const walletPath = process.env.ANCHOR_WALLET || '~/.config/solana/id.json'
+function loadWalletFromEnv(args: string[] = []): Keypair {
+  const walletPath =
+    readFlag(args, '--wallet') ||
+    process.env.SWARM_AUTHORITY_WALLET ||
+    process.env.ANCHOR_WALLET ||
+    '~/.config/solana/id.json'
   const resolved = resolveConfigPath(walletPath)
   return readKeypairFile(resolved, 'Wallet')
+}
+
+async function loadRuntimeWallet(
+  args: string[],
+  connection: Connection
+): Promise<{ wallet: Keypair; authorityPath: string | null; fresh: boolean }> {
+  if (!args.includes('--fresh') && !args.includes('--new-swarm')) {
+    return { wallet: loadWalletFromEnv(args), authorityPath: null, fresh: false }
+  }
+
+  const funder = loadWalletFromEnv(args)
+  const { wallet, filePath } = createFreshAuthorityKeypair()
+  await fundFreshAuthority(connection, funder, wallet)
+
+  return { wallet, authorityPath: filePath, fresh: true }
+}
+
+function createFreshAuthorityKeypair(): { wallet: Keypair; filePath: string } {
+  const wallet = Keypair.generate()
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
+  const filePath = path.join(SWARM_AUTHORITY_DIR, `authority-${stamp}-${wallet.publicKey.toBase58().slice(0, 8)}.json`)
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, JSON.stringify(Array.from(wallet.secretKey)))
+
+  return { wallet, filePath }
+}
+
+async function fundFreshAuthority(
+  connection: Connection,
+  funder: Keypair,
+  authority: Keypair
+): Promise<void> {
+  if (process.env.SKIP_FRESH_AUTHORITY_FUNDING === 'true') {
+    console.log(chalk.yellow('Skipping fresh authority funding because SKIP_FRESH_AUTHORITY_FUNDING=true'))
+    return
+  }
+
+  const lamports = Number(process.env.FRESH_SWARM_SOL_LAMPORTS ?? 0.25 * LAMPORTS_PER_SOL)
+  if (!Number.isFinite(lamports) || lamports <= 0) return
+
+  const balance = await connection.getBalance(funder.publicKey, 'confirmed').catch(() => 0)
+  if (balance <= lamports + 10_000) {
+    console.warn(
+      chalk.yellow(
+        `Fresh authority ${authority.publicKey.toBase58()} was created but not funded; ` +
+          `funder ${funder.publicKey.toBase58()} has insufficient SOL.`
+      )
+    )
+    return
+  }
+
+  const tx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: funder.publicKey,
+      toPubkey: authority.publicKey,
+      lamports
+    })
+  )
+  const signature = await sendAndConfirmTransaction(connection, tx, [funder], {
+    commitment: 'confirmed'
+  })
+  console.log(
+    chalk.gray(
+      `Funded fresh swarm authority ${authority.publicKey.toBase58()} with ${(lamports / LAMPORTS_PER_SOL).toFixed(3)} SOL: ${signature}`
+    )
+  )
 }
 
 function loadOracleKeypair(): Keypair {
@@ -1027,6 +1097,73 @@ function numberOr(fallback: number, value: unknown): number {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+function lineageMemoryRootDir(): string {
+  return process.env.LINEAGE_MEMORY_DIR
+    ? resolveConfigPath(process.env.LINEAGE_MEMORY_DIR)
+    : path.join(REPO_ROOT, 'packages/agent-runtime/.lineage-memory')
+}
+
+function archiveLocalRuntimeState(swarmAddress?: string): void {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
+  const archiveBase = path.join(STATE_ARCHIVE_DIR, stamp)
+  const targets = swarmAddress
+    ? [
+        { label: `agent-wallets-${swarmAddress}`, from: path.join(AGENT_WALLET_DIR, swarmAddress) },
+        { label: `lineage-memory-${swarmAddress}`, from: path.join(lineageMemoryRootDir(), swarmAddress) }
+      ]
+    : [
+        { label: 'agent-wallets', from: AGENT_WALLET_DIR },
+        { label: 'lineage-memory', from: lineageMemoryRootDir() }
+      ]
+
+  let moved = 0
+  fs.mkdirSync(archiveBase, { recursive: true })
+
+  for (const target of targets) {
+    if (!fs.existsSync(target.from)) continue
+    const destination = path.join(archiveBase, target.label)
+    fs.renameSync(target.from, destination)
+    moved += 1
+    console.log(chalk.gray(`Archived ${target.from} -> ${destination}`))
+  }
+
+  if (moved === 0) {
+    console.log(chalk.yellow('No local generation state found to archive.'))
+  }
+}
+
+function upsertEnvValue(filePath: string, key: string, value: string): void {
+  const resolved = resolveConfigPath(filePath)
+  const existing = fs.existsSync(resolved) ? fs.readFileSync(resolved, 'utf8') : ''
+  const lines = existing ? existing.split(/\r?\n/) : []
+  const nextLine = `${key}=${value}`
+  let replaced = false
+
+  const next = lines.map((line) => {
+    if (!line.startsWith(`${key}=`)) return line
+    replaced = true
+    return nextLine
+  })
+
+  if (!replaced) {
+    if (next.length > 0 && next[next.length - 1] !== '') next.push('')
+    next.push(nextLine)
+  }
+
+  fs.mkdirSync(path.dirname(resolved), { recursive: true })
+  fs.writeFileSync(resolved, `${next.join('\n').replace(/\n+$/, '')}\n`)
+}
+
+function writeFreshSwarmEnv(authorityPath: string, swarmAddress: string): void {
+  const relativeAuthorityPath = path.relative(REPO_ROOT, authorityPath)
+  upsertEnvValue('.env', 'SWARM_AUTHORITY_WALLET', relativeAuthorityPath)
+  upsertEnvValue('.env', 'ANCHOR_WALLET', relativeAuthorityPath)
+  upsertEnvValue('.env', 'NEXT_PUBLIC_SWARM_ADDRESS', swarmAddress)
+  upsertEnvValue('dashboard/.env.local', 'NEXT_PUBLIC_SWARM_ADDRESS', swarmAddress)
+
+  console.log(chalk.green(`Updated local env files for fresh swarm ${swarmAddress}`))
+}
+
 function parseTask(value: string | undefined): TaskType {
   switch ((value || 'yield-optimizer').toLowerCase()) {
     case 'yield':
@@ -1068,8 +1205,15 @@ async function main(): Promise<void> {
   const connection = new Connection(process.env.RPC_URL || 'https://api.devnet.solana.com', {
     commitment: 'confirmed'
   })
-  const wallet = loadWalletFromEnv()
+
+  if (args.includes('--reset-local-all')) {
+    archiveLocalRuntimeState()
+    return
+  }
+
+  const { wallet, authorityPath, fresh } = await loadRuntimeWallet(args, connection)
   const parent = new ParentAgent(config, connection, wallet)
+  const swarmAddress = parent.client.swarmPDA(wallet.publicKey).toBase58()
 
   console.log(chalk.bold('SwarmOS ParentAgent starting'))
   console.log(
@@ -1077,6 +1221,28 @@ async function main(): Promise<void> {
       `task=${config.taskType} agents=${config.agentsPerGeneration} generations=${config.maxGenerations} threshold=${config.scoringThreshold}`
     )
   )
+
+  if (fresh) {
+    console.log(chalk.green(`Fresh swarm authority: ${wallet.publicKey.toBase58()}`))
+    console.log(chalk.green(`Fresh swarm PDA: ${swarmAddress}`))
+    if (authorityPath) {
+      console.log(chalk.gray(`Authority keypair: ${path.relative(REPO_ROOT, authorityPath)}`))
+      if (args.includes('--write-env')) {
+        writeFreshSwarmEnv(authorityPath, swarmAddress)
+      } else {
+        console.log(
+          chalk.gray(
+            `Set NEXT_PUBLIC_SWARM_ADDRESS=${swarmAddress} in dashboard/.env.local to view this swarm.`
+          )
+        )
+      }
+    }
+  }
+
+  if (args.includes('--reset-local')) {
+    archiveLocalRuntimeState(swarmAddress)
+    return
+  }
 
   if (args.includes('--reclaim-dead')) {
     await parent.reclaimDeadAgentFunds()
