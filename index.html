@@ -1,0 +1,884 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>SwarmOS · Mission Control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+/* ── reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  background: #080808;
+  color: #F0F0F0;
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-feature-settings: "ss01","ss02","calt","zero";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+::selection { background: #9945FF44; color: #F0F0F0; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: #2a2a2a; }
+
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+/* ── keyframes ── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.3; transform: scale(0.85); }
+}
+@keyframes march {
+  to { stroke-dashoffset: -20; }
+}
+@keyframes dna-spin {
+  from { transform: rotateY(0deg); }
+  to   { transform: rotateY(360deg); }
+}
+@keyframes node-spawn {
+  from { transform: scale(0); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+@keyframes slide-in-top {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes blink {
+  0%, 60%   { opacity: 1; }
+  61%, 100% { opacity: 0; }
+}
+
+/* ── utility classes ── */
+.label-mono {
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #444;
+  font-weight: 500;
+}
+.divider-v {
+  width: 1px;
+  background: #1a1a1a;
+  align-self: stretch;
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js"
+  integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L"
+  crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"
+  integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm"
+  crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"
+  integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y"
+  crossorigin="anonymous"></script>
+
+<script type="text/babel">
+
+/* ═══════════════════════════════════════════════════════
+   HOOKS — mock useAgents / useSwarm / useEvents / useLineage
+   Mirrors the shape of the real hooks; drop real data in
+   and the visual layer renders unchanged.
+   ═══════════════════════════════════════════════════════ */
+
+const AGENT_LABELS = [
+  'YieldOptimizer','ArbScanner','LiquidationHunter','MEVRouter',
+  'FlashLender','PoolBalancer','StakeRebalancer','OracleSync',
+  'RouteFinder','GasOptimizer','VaultStrategist','PerpHedger',
+  'SlippageGuard','DepthProbe','BridgeArb','FundingRateBot',
+  'TWAMMTrader','JITLiquidity','ImpermanentHedge','SandwichDetector',
+];
+
+function randomHash(len = 16) {
+  const chars = '0123456789abcdef';
+  let s = '';
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * 16)];
+  return s;
+}
+
+function makeInitialAgents() {
+  const A = [];
+  const push = (id, gen, parentId, status, score, label, lineageOf = null) => {
+    A.push({
+      id, gen, parentId, status, score, label, lineageOf,
+      bornAt: Date.now() - (40 - id) * 8000,
+      hash: randomHash(8) + '...' + randomHash(6),
+    });
+  };
+  // Gen 0
+  push(1,  0, null, 'survived',   78, 'YieldOptimizer');
+  push(2,  0, null, 'survived',   82, 'ArbScanner');
+  push(3,  0, null, 'terminated', 12, 'LiquidationHunter');
+  push(4,  0, null, 'terminated', 31, 'MEVRouter');
+  push(5,  0, null, 'survived',   91, 'FlashLender');
+  push(6,  0, null, 'terminated', 18, 'PoolBalancer');
+  // Gen 1
+  push(7,  1, 1, 'survived',   71, 'YieldOptimizer');
+  push(8,  1, 2, 'terminated', 22, 'StakeRebalancer');
+  push(9,  1, 5, 'survived',   88, 'FlashLender');
+  push(10, 1, 1, 'terminated',  8, 'OracleSync');
+  push(11, 1, 5, 'scored',     67, 'RouteFinder');
+  push(12, 1, 2, 'survived',   73, 'ArbScanner');
+  // Gen 2
+  push(13, 2, 7,  'survived',   79, 'YieldOptimizer');
+  push(14, 2, 9,  'terminated', 41, 'GasOptimizer');
+  push(15, 2, 9,  'survived',   84, 'FlashLender');
+  push(16, 2, 11, 'scored',     58, 'VaultStrategist');
+  push(17, 2, 12, 'survived',   69, 'PerpHedger');
+  push(18, 2, 7,  'respawned',  null, 'YieldOptimizer', 14);
+  // Gen 3
+  push(19, 3, 13, 'active',  null, 'YieldOptimizer');
+  push(20, 3, 15, 'active',  null, 'SlippageGuard');
+  push(21, 3, 17, 'scored',    72, 'DepthProbe');
+  push(22, 3, 13, 'active',  null, 'BridgeArb');
+  push(23, 3, 15, 'respawned', null, 'FundingRateBot', 10);
+  // Gen 4
+  push(24, 4, 19, 'active', null, 'TWAMMTrader');
+  push(25, 4, 21, 'active', null, 'JITLiquidity');
+  push(26, 4, 22, 'active', null, 'ImpermanentHedge');
+  return A;
+}
+
+function makeInitialEvents(agents) {
+  const evts = [];
+  let t = Date.now() - 60_000;
+  agents.forEach((a) => {
+    const inh = a.parentId ? Math.floor(Math.random() * 3) + 1 : 0;
+    evts.push({ id: 'e-' + a.id + '-spawn', type: 'SPAWNED', agentId: a.id, gen: a.gen, score: null, meta: { inheritedMemories: inh }, ts: t });
+    t += 800 + Math.random() * 1200;
+    if (a.status === 'scored' || a.status === 'survived' || a.status === 'terminated') {
+      evts.push({ id: 'e-' + a.id + '-score', type: 'SCORED', agentId: a.id, gen: a.gen, score: a.score, ts: t });
+      t += 400 + Math.random() * 600;
+    }
+    if (a.status === 'survived') {
+      evts.push({ id: 'e-' + a.id + '-surv', type: 'SURVIVED', agentId: a.id, gen: a.gen, score: a.score, ts: t });
+      t += 200;
+    }
+    if (a.status === 'terminated') {
+      evts.push({ id: 'e-' + a.id + '-term', type: 'TERMINATED', agentId: a.id, gen: a.gen, score: a.score, ts: t });
+      t += 200;
+    }
+    if (a.status === 'respawned') {
+      evts.push({ id: 'e-' + a.id + '-resp', type: 'RESPAWNED', agentId: a.id, gen: a.gen, meta: { from: a.lineageOf }, ts: t });
+      t += 200;
+    }
+  });
+  return evts.sort((x, y) => y.ts - x.ts);
+}
+
+function useSwarm() {
+  return {
+    name: 'genesis-alpha',
+    address: 'GxK4nP8Jq9mR3vL2sB7tY1xW5zH8mNqK6rD4fA2cE9bU',
+    generation: 4,
+    threshold: 65,
+    task: 'YIELD_OPTIMIZATION',
+    cluster: 'devnet',
+  };
+}
+
+function useAgents() {
+  const [agents, setAgents] = React.useState(makeInitialAgents);
+
+  React.useEffect(() => {
+    const tick = setInterval(() => {
+      setAgents((prev) => {
+        const next = prev.slice();
+        const actives = next.filter((a) => a.status === 'active');
+        const r = Math.random();
+        if (r < 0.55 && actives.length > 0) {
+          const target = actives[Math.floor(Math.random() * actives.length)];
+          const idx = next.findIndex((a) => a.id === target.id);
+          next[idx] = { ...next[idx], status: 'scored', score: Math.floor(Math.random() * 100) };
+        } else if (r < 0.85) {
+          const maxGen = Math.max(...next.map((a) => a.gen));
+          const candidates = next.filter((a) => a.gen === maxGen - 1 && ['survived','scored','active'].includes(a.status));
+          const parent = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : next[next.length - 1];
+          const newId = Math.max(...next.map((a) => a.id)) + 1;
+          next.push({
+            id: newId, gen: parent.gen + 1, parentId: parent.id,
+            status: 'active', score: null,
+            label: AGENT_LABELS[Math.floor(Math.random() * AGENT_LABELS.length)],
+            bornAt: Date.now(),
+            hash: randomHash(8) + '...' + randomHash(6),
+          });
+        } else {
+          const scored = next.filter((a) => a.status === 'scored');
+          if (scored.length) {
+            const idx = next.findIndex((a) => a.id === scored[0].id);
+            next[idx] = { ...next[idx], status: scored[0].score >= 65 ? 'survived' : 'terminated' };
+          }
+        }
+        return next;
+      });
+    }, 4200);
+    return () => clearInterval(tick);
+  }, []);
+
+  return agents;
+}
+
+function useEvents(agents) {
+  const [events, setEvents] = React.useState(() => makeInitialEvents(makeInitialAgents()));
+  const prevRef = React.useRef(agents);
+
+  React.useEffect(() => {
+    const prev = prevRef.current;
+    const newEvents = [];
+    const prevIds = new Set(prev.map((a) => a.id));
+    agents.forEach((a) => {
+      if (!prevIds.has(a.id)) {
+        const inh = a.parentId ? Math.floor(Math.random() * 3) + 1 : 0;
+        if (a.status === 'respawned') {
+          newEvents.push({ id: 'e-' + a.id + '-resp-' + Date.now(), type: 'RESPAWNED', agentId: a.id, gen: a.gen, meta: { from: a.lineageOf }, ts: Date.now() });
+        } else {
+          newEvents.push({ id: 'e-' + a.id + '-spawn-' + Date.now(), type: 'SPAWNED', agentId: a.id, gen: a.gen, meta: { inheritedMemories: inh }, ts: Date.now() });
+        }
+      }
+    });
+    const prevById = new Map(prev.map((a) => [a.id, a]));
+    agents.forEach((a) => {
+      const p = prevById.get(a.id);
+      if (p && p.status !== a.status) {
+        if (a.status === 'scored')
+          newEvents.push({ id: 'e-' + a.id + '-score-' + Date.now(), type: 'SCORED', agentId: a.id, gen: a.gen, score: a.score, ts: Date.now() });
+        else if (a.status === 'survived')
+          newEvents.push({ id: 'e-' + a.id + '-surv-' + Date.now(), type: 'SURVIVED', agentId: a.id, gen: a.gen, score: a.score, ts: Date.now() });
+        else if (a.status === 'terminated')
+          newEvents.push({ id: 'e-' + a.id + '-term-' + Date.now(), type: 'TERMINATED', agentId: a.id, gen: a.gen, score: a.score, ts: Date.now() });
+      }
+    });
+    if (newEvents.length) setEvents((e) => [...newEvents, ...e].slice(0, 80));
+    prevRef.current = agents;
+  }, [agents]);
+
+  return events;
+}
+
+function useLineage(agents) {
+  return React.useMemo(() =>
+    agents
+      .filter((a) => a.status === 'terminated')
+      .map((a) => ({
+        agentId: a.id, gen: a.gen, label: a.label,
+        score: a.score, hash: a.hash,
+        ts: a.bornAt + 30_000,
+        reason: 'ar://mock-' + a.id + '-' + Math.floor(a.bornAt / 1000),
+      }))
+      .sort((x, y) => y.ts - x.ts),
+  [agents]);
+}
+
+
+/* ═══════════════════════════════════════════════════════
+   STATS BAR — DNA logo · stat pills · UTC clock
+   ═══════════════════════════════════════════════════════ */
+
+function DNALogo() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20"
+      style={{ animation: 'dna-spin 8s linear infinite', transformStyle: 'preserve-3d' }}>
+      <defs>
+        <linearGradient id="dna-a" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#9945FF"/>
+          <stop offset="1" stopColor="#9945FF99"/>
+        </linearGradient>
+        <linearGradient id="dna-b" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#14F195"/>
+          <stop offset="1" stopColor="#14F19599"/>
+        </linearGradient>
+      </defs>
+      <path d="M4 2 Q 16 6 4 10 Q 16 14 4 18" fill="none" stroke="url(#dna-a)" strokeWidth="1.5" strokeLinecap="round"/>
+      <path d="M16 2 Q 4 6 16 10 Q 4 14 16 18" fill="none" stroke="url(#dna-b)" strokeWidth="1.5" strokeLinecap="round"/>
+      <line x1="6"  y1="4"  x2="14" y2="4"  stroke="#9945FF44" strokeWidth="0.7"/>
+      <line x1="7"  y1="8"  x2="13" y2="8"  stroke="#9945FF44" strokeWidth="0.7"/>
+      <line x1="6"  y1="12" x2="14" y2="12" stroke="#9945FF44" strokeWidth="0.7"/>
+      <line x1="7"  y1="16" x2="13" y2="16" stroke="#9945FF44" strokeWidth="0.7"/>
+    </svg>
+  );
+}
+
+function StatPill({ label, value, color = '#F0F0F0' }) {
+  return (
+    <div style={{ padding: '0 18px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0, height: '100%' }}>
+      <div className="label-mono" style={{ marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 18, lineHeight: 1, color, fontWeight: 600, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function PulseDot({ active }) {
+  const color = active ? '#14F195' : '#444';
+  return (
+    <span style={{ position: 'relative', width: 6, height: 6, display: 'inline-block' }}>
+      <span style={{ position: 'absolute', inset: 0, borderRadius: 999, background: color, animation: active ? 'pulse-dot 2s ease-in-out infinite' : 'none' }}/>
+      {active && (
+        <span style={{ position: 'absolute', inset: -3, borderRadius: 999, boxShadow: '0 0 8px ' + color, animation: 'pulse-dot 2s ease-in-out infinite' }}/>
+      )}
+    </span>
+  );
+}
+
+function UTCClock() {
+  const [now, setNow] = React.useState(() => new Date());
+  React.useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const pad = (n) => String(n).padStart(2, '0');
+  const s = now.getUTCFullYear() + '-' + pad(now.getUTCMonth() + 1) + '-' + pad(now.getUTCDate())
+    + ' ' + pad(now.getUTCHours()) + ':' + pad(now.getUTCMinutes()) + ':' + pad(now.getUTCSeconds()) + 'Z';
+  return <span style={{ fontSize: 11, color: '#333', fontVariantNumeric: 'tabular-nums', letterSpacing: '0.02em' }}>{s}</span>;
+}
+
+function StatsBar({ swarm, agents }) {
+  const active   = agents.filter((a) => a.status === 'active').length;
+  const spawned  = agents.length;
+  const survived = agents.filter((a) => a.status === 'survived').length;
+  const hasActive = active > 0;
+
+  return (
+    <header style={{ height: 48, flex: '0 0 48px', display: 'flex', alignItems: 'stretch', borderBottom: '1px solid #1a1a1a', background: '#080808' }}>
+      {/* Logo + name */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', minWidth: 280, borderRight: '1px solid #1a1a1a' }}>
+        <DNALogo/>
+        <span style={{ fontSize: 13, color: '#9945FF', letterSpacing: '0.08em', fontWeight: 600 }}>SWARMOS</span>
+        <span style={{ color: '#222', fontSize: 13 }}>/</span>
+        <span style={{ fontSize: 12, color: '#666', letterSpacing: '0.04em' }}>{swarm.name}</span>
+      </div>
+
+      {/* Stat pills */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'stretch', overflow: 'hidden' }}>
+        <StatPill label="GENERATION" value={'G' + swarm.generation}/>
+        <div className="divider-v"/>
+        <StatPill label="ACTIVE" value={String(active).padStart(2, '0')} color="#9945FF"/>
+        <div className="divider-v"/>
+        <StatPill label="SPAWNED" value={String(spawned).padStart(3, '0')}/>
+        <div className="divider-v"/>
+        <StatPill label="THRESHOLD" value={swarm.threshold + '/100'}/>
+        <div className="divider-v"/>
+        <StatPill label="TASK" value={swarm.task}/>
+        <div className="divider-v"/>
+        <StatPill label="SURVIVAL RATE"
+          value={spawned ? Math.round((survived / spawned) * 100) + '%' : '—'}
+          color="#14F195"/>
+      </div>
+
+      {/* Network + clock */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '0 16px', borderLeft: '1px solid #1a1a1a' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <PulseDot active={hasActive}/>
+          <span style={{ fontSize: 10, color: hasActive ? '#14F195' : '#444', letterSpacing: '0.18em', fontWeight: 600 }}>
+            {swarm.cluster.toUpperCase()}
+          </span>
+        </div>
+        <div style={{ width: 1, height: 14, background: '#1a1a1a' }}/>
+        <UTCClock/>
+      </div>
+    </header>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════
+   SWARM VISUALIZER — generation-lane SVG topology
+   ═══════════════════════════════════════════════════════ */
+
+function StatusTag({ status }) {
+  const map = {
+    active:     { label: 'Active',     c: '#9945FF' },
+    survived:   { label: 'Survived',   c: '#14F195' },
+    terminated: { label: 'Terminated', c: '#FF3B3B' },
+    scored:     { label: 'Scored',     c: '#F5A623' },
+    respawned:  { label: 'Respawned',  c: '#38BDF8' },
+  };
+  const m = map[status] || { label: status, c: '#888' };
+  return <span style={{ color: m.c }}>{m.label}</span>;
+}
+
+function Legend() {
+  const items = [
+    ['#9945FF','ACTIVE'], ['#14F195','SURVIVED'], ['#F5A623','SCORED'],
+    ['#38BDF8','RESPAWNED'], ['#FF3B3B','TERMINATED'],
+  ];
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      {items.map(([c, l]) => (
+        <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: 999,
+            background: l === 'TERMINATED' ? 'transparent' : c,
+            border: l === 'TERMINATED' ? '1px solid ' + c : 'none',
+          }}/>
+          <span style={{ fontSize: 9, color: '#444', letterSpacing: '0.15em' }}>{l}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SwarmVisualizer({ agents, swarm }) {
+  const containerRef = React.useRef(null);
+  const [size, setSize] = React.useState({ w: 800, h: 600 });
+  const [hover, setHover] = React.useState(null);
+  const [copied, setCopied] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const { width, height } = e.contentRect;
+        setSize({ w: Math.max(400, width), h: Math.max(400, height) });
+      }
+    });
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const LANE_H  = 120;
+  const TOP_PAD = 80;
+  const SIDE_PAD = 60;
+
+  const gens = React.useMemo(() => {
+    const m = new Map();
+    agents.forEach((a) => {
+      if (!m.has(a.gen)) m.set(a.gen, []);
+      m.get(a.gen).push(a);
+    });
+    return [...m.entries()].sort((a, b) => a[0] - b[0]);
+  }, [agents]);
+
+  const naturalH = TOP_PAD + gens.length * LANE_H + 40;
+
+  const positions = React.useMemo(() => {
+    const pos = new Map();
+    gens.forEach(([g, list], laneIdx) => {
+      const y = TOP_PAD + laneIdx * LANE_H;
+      const usableW = size.w - SIDE_PAD * 2;
+      const step = Math.max(40, usableW / Math.max(list.length, 1));
+      const total = step * (list.length - 1);
+      const startX = size.w / 2 - total / 2;
+      list.forEach((a, i) => { pos.set(a.id, { x: startX + i * step, y }); });
+    });
+    return pos;
+  }, [gens, size.w]);
+
+  function nodeRadius(a) {
+    return 10 + ((typeof a.score === 'number' ? a.score : 50) / 100) * 14;
+  }
+
+  function nodeColors(a) {
+    switch (a.status) {
+      case 'active':     return { fill: '#9945FF', stroke: 'none', glow: '#9945FF', strokeW: 0,   dash: null };
+      case 'survived':   return { fill: '#14F195', stroke: 'none', glow: '#14F195', strokeW: 0,   dash: null };
+      case 'scored':     return { fill: '#F5A623', stroke: 'none', glow: '#F5A623', strokeW: 0,   dash: null };
+      case 'respawned':  return { fill: '#38BDF8', stroke: 'none', glow: '#38BDF8', strokeW: 0,   dash: null };
+      case 'terminated': return { fill: 'transparent', stroke: '#FF3B3B', glow: null, strokeW: 1.5, dash: '4 2' };
+      default:           return { fill: '#666',    stroke: 'none', glow: null,    strokeW: 0,   dash: null };
+    }
+  }
+
+  const truncAddr = swarm.address.slice(0, 8) + '…' + swarm.address.slice(-8);
+  const handleCopy = () => {
+    navigator.clipboard?.writeText(swarm.address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {/* Header strip */}
+      <div style={{ height: 32, flex: '0 0 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', borderBottom: '1px solid #1a1a1a', background: '#0b0b0b' }}>
+        <span className="label-mono">SWARM TOPOLOGY</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Legend/>
+          <span style={{ fontSize: 10, color: '#333', letterSpacing: '0.15em' }}>
+            {String(agents.length).padStart(3, '0')} NODES
+          </span>
+        </div>
+      </div>
+
+      {/* Canvas */}
+      <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#080808' }}>
+        {/* Subtle dot grid */}
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          backgroundImage: 'linear-gradient(to right,#0f0f0f 1px,transparent 1px),linear-gradient(to bottom,#0f0f0f 1px,transparent 1px)',
+          backgroundSize: '40px 40px', opacity: 0.5,
+        }}/>
+
+        {/* Generation rails */}
+        {gens.map(([g], laneIdx) => (
+          <div key={'rail-' + g} style={{
+            position: 'absolute', left: 0, right: 0,
+            top: TOP_PAD + laneIdx * LANE_H - 30,
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '0 16px', pointerEvents: 'none',
+          }}>
+            <span className="label-mono" style={{ color: '#333' }}>GEN {g}</span>
+            <div style={{ flex: 1, height: 1, background: '#0f0f0f' }}/>
+          </div>
+        ))}
+
+        <svg width={size.w} height={Math.max(naturalH, size.h)} style={{ position: 'absolute', inset: 0 }}>
+          <defs>
+            <marker id="arrow-faint" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L5,3 L0,6 z" fill="#2a2a2a"/>
+            </marker>
+            <marker id="arrow-purple" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L5,3 L0,6 z" fill="#9945FF"/>
+            </marker>
+          </defs>
+
+          {/* Parent → child edges */}
+          {agents.map((a) => {
+            if (a.parentId == null) return null;
+            const p = positions.get(a.parentId);
+            const c = positions.get(a.id);
+            if (!p || !c) return null;
+            const parentAgent = agents.find((x) => x.id === a.parentId) || a;
+            return (
+              <line key={'pe-' + a.id}
+                x1={p.x} y1={p.y + nodeRadius(parentAgent)}
+                x2={c.x} y2={c.y - nodeRadius(a) - 2}
+                stroke="#2a2a2a" strokeWidth="0.5"
+                markerEnd="url(#arrow-faint)"/>
+            );
+          })}
+
+          {/* Lineage inheritance edges — marching ants */}
+          {agents.map((a) => {
+            if (a.status !== 'respawned' || a.lineageOf == null) return null;
+            const p = positions.get(a.lineageOf);
+            const c = positions.get(a.id);
+            if (!p || !c) return null;
+            return (
+              <line key={'le-' + a.id}
+                x1={p.x} y1={p.y} x2={c.x} y2={c.y}
+                stroke="#9945FF" strokeWidth="0.7"
+                strokeDasharray="2 3"
+                style={{ animation: 'march 1s linear infinite' }}/>
+            );
+          })}
+
+          {/* Nodes */}
+          {agents.map((a) => {
+            const p = positions.get(a.id);
+            if (!p) return null;
+            const r = nodeRadius(a);
+            const col = nodeColors(a);
+            return (
+              <g key={'n-' + a.id}
+                style={{ transformOrigin: p.x + 'px ' + p.y + 'px', animation: 'node-spawn 320ms cubic-bezier(0.2,0.9,0.3,1.2) both', cursor: 'pointer' }}
+                onMouseEnter={() => setHover({ agent: a, x: p.x, y: p.y })}
+                onMouseLeave={() => setHover(null)}>
+                {col.glow ? (
+                  <circle cx={p.x} cy={p.y} r={r} fill={col.fill}
+                    style={{ filter: 'drop-shadow(0 0 6px ' + col.glow + (a.status === 'survived' ? '44' : '88') + ')' }}/>
+                ) : (
+                  <circle cx={p.x} cy={p.y} r={r}
+                    fill={col.fill} stroke={col.stroke}
+                    strokeWidth={col.strokeW} strokeDasharray={col.dash || ''}/>
+                )}
+                {r >= 12 && (
+                  <text x={p.x} y={p.y + 3} textAnchor="middle" fontSize="8"
+                    fill={a.status === 'terminated' ? '#FF3B3B' : '#fff'}
+                    fontFamily="JetBrains Mono, monospace"
+                    style={{ pointerEvents: 'none', fontWeight: 600 }}>
+                    {a.id}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Hover tooltip */}
+        {hover && (() => {
+          const a = hover.agent;
+          const left = Math.min(Math.max(hover.x - 90, 8), size.w - 188);
+          const top  = hover.y - 90;
+          return (
+            <div style={{
+              position: 'absolute', left, top, width: 180,
+              background: '#1a1a1a', border: '1px solid #2a2a2a',
+              padding: '8px 10px', pointerEvents: 'none', zIndex: 5,
+              fontSize: 11, lineHeight: 1.5, color: '#888',
+            }}>
+              <div style={{ color: '#F0F0F0', fontWeight: 600, fontSize: 11, letterSpacing: '0.04em' }}>
+                AGENT #{a.id}
+              </div>
+              <div>
+                <span style={{ color: '#666' }}>Gen {a.gen}</span>
+                <span style={{ color: '#222' }}> · </span>
+                <StatusTag status={a.status}/>
+              </div>
+              <div>Score: <span style={{ color: '#F0F0F0' }}>{a.score == null ? '—' : a.score + '/100'}</span></div>
+              <div style={{ color: '#9945FF' }}>{a.label}</div>
+            </div>
+          );
+        })()}
+
+        {agents.length === 0 && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#222', fontSize: 12, letterSpacing: '0.15em' }}>
+            no agents · awaiting genesis spawn
+          </div>
+        )}
+
+        {/* Address bar */}
+        <button onClick={handleCopy} style={{
+          position: 'absolute', left: 16, bottom: 12,
+          fontSize: 10, color: copied ? '#14F195' : '#222',
+          letterSpacing: '0.1em', fontVariantNumeric: 'tabular-nums',
+          padding: 0, transition: 'color 200ms',
+        }}>
+          {copied ? '✓ COPIED' : truncAddr + '  ⧉'}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════
+   AGENT FEED — live event stream with slide-in rows
+   ═══════════════════════════════════════════════════════ */
+
+const PILL_STYLES = {
+  SPAWNED:    { bg: '#9945FF22', fg: '#9945FF', bd: '#9945FF44' },
+  SCORED:     { bg: '#F5A62322', fg: '#F5A623', bd: '#F5A62344' },
+  SURVIVED:   { bg: '#14F19522', fg: '#14F195', bd: '#14F19544' },
+  TERMINATED: { bg: '#FF3B3B22', fg: '#FF3B3B', bd: '#FF3B3B44' },
+  RESPAWNED:  { bg: '#38BDF822', fg: '#38BDF8', bd: '#38BDF844' },
+};
+
+function eventDescription(e) {
+  switch (e.type) {
+    case 'SPAWNED':    return 'Agent #' + e.agentId + ' deployed · Gen ' + e.gen + ' · ' + (e.meta?.inheritedMemories ?? 0) + ' lineage memories inherited';
+    case 'SCORED':     return 'Agent #' + e.agentId + ' scored ' + e.score + '/100';
+    case 'SURVIVED':   return 'Agent #' + e.agentId + ' survived · score ' + e.score + ' · genetic memory preserved';
+    case 'TERMINATED': return 'Agent #' + e.agentId + ' eliminated · score ' + e.score + ' · failure recorded on-chain';
+    case 'RESPAWNED':  return 'Agent #' + e.agentId + ' respawned from #' + (e.meta?.from ?? '?') + ' · inherits failure context';
+    default:           return '—';
+  }
+}
+
+function fmtHMS(ts) {
+  const d = new Date(ts), pad = (n) => String(n).padStart(2, '0');
+  return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+}
+
+function EventRow({ event, isNew }) {
+  const p = PILL_STYLES[event.type] || PILL_STYLES.SPAWNED;
+  return (
+    <div style={{
+      height: 28, flex: '0 0 28px',
+      display: 'flex', alignItems: 'center', gap: 12,
+      padding: '0 16px',
+      borderBottom: '1px solid #111',
+      animation: isNew ? 'slide-in-top 220ms ease-out both' : 'none',
+    }}>
+      <span style={{ fontSize: 10, color: '#333', fontVariantNumeric: 'tabular-nums', letterSpacing: '0.04em', minWidth: 56 }}>
+        {fmtHMS(event.ts)}
+      </span>
+      <span style={{
+        fontSize: 9, letterSpacing: '0.15em', fontWeight: 600,
+        padding: '3px 6px',
+        background: p.bg, color: p.fg, border: '1px solid ' + p.bd,
+        minWidth: 78, textAlign: 'center',
+      }}>
+        {event.type}
+      </span>
+      <span style={{ fontSize: 12, color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>
+        {eventDescription(event)}
+      </span>
+    </div>
+  );
+}
+
+function AgentFeed({ events }) {
+  const newestRef = React.useRef(events[0]?.id);
+  const [latestId, setLatestId] = React.useState(events[0]?.id);
+  React.useEffect(() => {
+    if (events[0]?.id !== newestRef.current) {
+      newestRef.current = events[0]?.id;
+      setLatestId(events[0]?.id);
+    }
+  }, [events]);
+
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', overflow: 'hidden' }}>
+      <div style={{ height: 32, flex: '0 0 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', borderBottom: '1px solid #1a1a1a', background: '#0b0b0b' }}>
+        <span className="label-mono">EVENT STREAM</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 5, height: 5, borderRadius: 999, background: '#14F195', animation: 'pulse-dot 2s ease-in-out infinite', boxShadow: '0 0 6px #14F195', display: 'inline-block' }}/>
+          <span style={{ fontSize: 9, color: '#14F195', letterSpacing: '0.18em', fontWeight: 600 }}>LIVE</span>
+        </div>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, background: '#080808' }}>
+        {events.length === 0 ? (
+          <div style={{ padding: 24, color: '#222', fontSize: 12, letterSpacing: '0.1em' }}>
+            <span style={{ animation: 'blink 1.1s step-end infinite' }}>_</span>
+            <span style={{ marginLeft: 8 }}>awaiting on-chain events</span>
+          </div>
+        ) : (
+          events.map((e) => <EventRow key={e.id} event={e} isNew={e.id === latestId}/>)
+        )}
+      </div>
+    </section>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════
+   LINEAGE PANEL — terminated agents as left-border cards
+   ═══════════════════════════════════════════════════════ */
+
+function fmtFull(ts) {
+  const d = new Date(ts), pad = (n) => String(n).padStart(2, '0');
+  return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate())
+    + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + 'Z';
+}
+
+function ScoreBar({ score }) {
+  const pct = Math.max(0, Math.min(100, score));
+  return (
+    <div style={{ position: 'relative', width: '100%', height: 2, background: '#1a1a1a', marginTop: 10 }}>
+      <div style={{
+        position: 'absolute', left: 0, top: 0, bottom: 0,
+        width: pct + '%',
+        background: '#FF3B3B',
+        boxShadow: pct > 0 ? '0 0 6px #FF3B3B66' : 'none',
+        transition: 'width 400ms ease-out',
+      }}/>
+    </div>
+  );
+}
+
+function LineageCard({ rec, index }) {
+  return (
+    <article style={{
+      background: '#0f0f0f',
+      borderLeft: '2px solid #FF3B3B',
+      padding: '12px 16px',
+      marginBottom: 8,
+      animation: 'fade-in 400ms ease-out both',
+      animationDelay: Math.min(index * 40, 240) + 'ms',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, minWidth: 0 }}>
+          <span style={{ fontSize: 14, color: '#FF3B3B', fontWeight: 700, letterSpacing: '-0.01em' }}>#{rec.agentId}</span>
+          <span className="label-mono" style={{ color: '#444' }}>GEN {rec.gen}</span>
+          <span style={{ fontSize: 12, color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rec.label}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexShrink: 0 }}>
+          <span className="label-mono" style={{ color: '#444' }}>FAILURE SCORE</span>
+          <span style={{ fontSize: 12, color: '#FF3B3B', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{rec.score}/100</span>
+        </div>
+      </div>
+
+      <ScoreBar score={rec.score}/>
+
+      <div style={{ height: 1, background: '#1a1a1a', margin: '12px 0 10px' }}/>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 16, rowGap: 4 }}>
+        <span className="label-mono" style={{ color: '#444', alignSelf: 'center' }}>HASH</span>
+        <span style={{ fontSize: 12, color: '#888', fontVariantNumeric: 'tabular-nums' }}>{rec.hash}</span>
+
+        <span className="label-mono" style={{ color: '#444', alignSelf: 'center' }}>TIME</span>
+        <span style={{ fontSize: 12, color: '#888', fontVariantNumeric: 'tabular-nums' }}>{fmtFull(rec.ts)}</span>
+
+        <span className="label-mono" style={{ color: '#444', alignSelf: 'center' }}>REASON</span>
+        <span style={{ fontSize: 12, color: '#888', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rec.reason}</span>
+          <a href="#" onClick={(e) => e.preventDefault()}
+            style={{ color: '#333', fontSize: 11, textDecoration: 'none', flexShrink: 0, transition: 'color 150ms' }}
+            onMouseOver={(e) => { e.currentTarget.style.color = '#9945FF'; }}
+            onMouseOut={(e)  => { e.currentTarget.style.color = '#333'; }}>
+            view →
+          </a>
+        </span>
+      </div>
+    </article>
+  );
+}
+
+function LineagePanel({ lineage }) {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', overflow: 'hidden' }}>
+      <div style={{ height: 32, flex: '0 0 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', borderBottom: '1px solid #1a1a1a', background: '#0b0b0b' }}>
+        <span className="label-mono">LINEAGE MEMORY</span>
+        <span style={{ fontSize: 10, color: '#333', letterSpacing: '0.15em' }}>
+          {String(lineage.length).padStart(3, '0')} RECORDS
+        </span>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, padding: 12, background: '#080808' }}>
+        {lineage.length === 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#222', fontSize: 12, letterSpacing: '0.1em' }}>
+            no terminated agents · all agents survived
+          </div>
+        ) : (
+          lineage.map((rec, i) => <LineageCard key={rec.agentId} rec={rec} index={i}/>)
+        )}
+      </div>
+    </section>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════
+   APP — 45/55 full-height layout
+   ═══════════════════════════════════════════════════════ */
+
+function App() {
+  const swarm   = useSwarm();
+  const agents  = useAgents();
+  const events  = useEvents(agents);
+  const lineage = useLineage(agents);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#080808' }}>
+      <StatsBar swarm={swarm} agents={agents}/>
+
+      <main style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* LEFT 45% — topology */}
+        <div style={{ flex: '0 0 45%', minWidth: 0, borderRight: '1px solid #1a1a1a' }}>
+          <SwarmVisualizer agents={agents} swarm={swarm}/>
+        </div>
+
+        {/* RIGHT 55% — event stream + lineage memory */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
+          <div style={{ flex: '1 1 50%', minHeight: 0, borderBottom: '1px solid #1a1a1a' }}>
+            <AgentFeed events={events}/>
+          </div>
+          <div style={{ flex: '1 1 50%', minHeight: 0 }}>
+            <LineagePanel lineage={lineage}/>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+
+</script>
+</body>
+</html>
