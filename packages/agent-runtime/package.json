@@ -1,0 +1,26 @@
+{
+  "name": "@swarmos/agent-runtime",
+  "version": "0.1.0",
+  "scripts": {
+    "start": "ts-node src/parent.ts",
+    "reclaim-dead": "ts-node src/parent.ts --reclaim-dead",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.1",
+    "@coral-xyz/anchor": "^0.31.1",
+    "@solana/kit": "^6.9.0",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "@x402/axios": "^2.11.0",
+    "@x402/svm": "^2.11.0",
+    "axios": "^1.6.0",
+    "chalk": "^4.1.2",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.4.0"
+  }
+}
