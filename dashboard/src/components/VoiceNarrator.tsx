@@ -4,100 +4,84 @@ import { useEffect, useRef, useState } from 'react'
 import { VoiceQueue } from '@/lib/voice'
 import type { SwarmEvent } from '@/lib/client'
 
+import type { VoiceSettings } from '@/lib/voice'
+
 const VOICE_ID = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID ?? 'pNInz6obpgDQGcFmaJgB'
 
-// Unique key per event — NOT timestamp (all events in a batch share the same timestamp)
+// Voice gets more expressive (lower stability) as generations increase
+function settingsForGen(gen: number): VoiceSettings {
+  if (gen <= 1) return { stability: 0.60, similarity_boost: 0.75 }
+  if (gen === 2) return { stability: 0.42, similarity_boost: 0.80 }
+  return              { stability: 0.28, similarity_boost: 0.85 }
+}
+
 function eventKey(e: SwarmEvent): string {
   const id = e.agentId ?? e.newAgentId ?? 0
   return `${e.type}:${id}:${e.generation ?? 0}`
 }
 
-function pct(n: number): string {
-  return `${(n * 100).toFixed(1)} percent`
+// One line per generation wave — suppress per-agent spawn noise
+function buildSpawnWaveLine(gen: number, agentCount: number, totalMemories: number): string {
+  const memPhrase = totalMemories > 0
+    ? `carrying ${totalMemories} failure ${totalMemories === 1 ? 'memory' : 'memories'} from the dead`
+    : 'no inherited knowledge — entering blind'
+
+  if (gen <= 1) {
+    return `Generation one begins. ${agentCount} agents deployed — ${memPhrase}. The market will sort them.`
+  }
+  if (gen === 2) {
+    return `Generation two. ${agentCount} agents, each ${memPhrase}. The swarm is learning from its casualties.`
+  }
+  return `Generation ${gen}. ${agentCount} evolved agents — ${memPhrase}. Every mistake the swarm has made is now a weapon.`
 }
 
-function buildLine(event: SwarmEvent): string | null {
-  const id    = event.agentId ?? event.newAgentId ?? 0
-  const gen   = event.generation ?? 0
-  const score = event.score ?? 0
+function buildTerminateLine(event: SwarmEvent, gen: number): string {
+  const id       = event.agentId ?? 0
+  const score    = event.score ?? 0
+  const protocol = event.protocol ?? 'the protocol'
 
-  switch (event.type) {
-    case 'AgentSpawned': {
-      const mem = event.inheritedMemories ?? 0
-      if (mem >= 5) {
-        return `Agent ${id} enters generation ${gen}, armed with ${mem} inherited failure memories. ` +
-          `Every mistake its ancestors made is now a constraint in its reasoning. This one knows what not to do.`
-      }
-      if (mem > 0) {
-        return `Agent ${id} launches into generation ${gen}. It carries ${mem} failure ${mem === 1 ? 'memory' : 'memories'} from the last wave. ` +
-          `The chain does not forget.`
-      }
-      return `Agent ${id} is deployed. Generation ${gen}. No inherited knowledge — ` +
-        `it enters the DeFi arena with nothing but its own reasoning. The market will judge it.`
+  if (event.claimedAPY != null && event.actualAPY != null) {
+    const deltaSign = event.claimedAPY > event.actualAPY ? 'over' : 'under'
+    const deltaPct  = Math.abs((event.claimedAPY - event.actualAPY) * 100).toFixed(1)
+
+    if (gen <= 1) {
+      return `Agent ${id} eliminated. Score ${score}. Claimed ${protocol} at ${event.claimedAPY.toFixed(2)} percent — actual was ${event.actualAPY.toFixed(2)}. ${deltaPct} points ${deltaSign}estimated. Failure written to chain.`
     }
-
-    case 'AgentScored': {
-      const protocol = event.protocol ?? 'an unknown protocol'
-      const actual   = event.actualAPY != null ? pct(event.actualAPY) : null
-      if (score >= 83) {
-        return `Agent ${id} scores ${score} out of one hundred. ` +
-          (actual ? `It found ${protocol} at ${actual}. ` : '') +
-          `A strong read. The swarm moves forward with this intelligence.`
-      }
-      if (score >= 60) {
-        return `Agent ${id} comes in at ${score}. ` +
-          (actual ? `${protocol} at ${actual}. ` : '') +
-          `It clears the threshold — but only just. Survival is not guaranteed.`
-      }
-      return `Agent ${id} scores ${score}. ` +
-        (actual ? `${protocol} at ${actual}. ` : '') +
-        `Below sixty. The oracle is not impressed.`
+    if (gen === 2) {
+      return `Agent ${id} cut. Score ${score}. Still hallucinating yields — ${deltaPct} points off. Its predecessors made this exact mistake. The chain will make sure generation three does not.`
     }
-
-    case 'AgentSurvived': {
-      const protocol = event.protocol ?? 'its recommended protocol'
-      return `Agent ${id} survives generation ${gen} with a score of ${score}. ` +
-        `Its read on ${protocol} holds up against live market data. ` +
-        `Its knowledge is preserved — the next generation will inherit this edge.`
-    }
-
-    case 'AgentTerminated': {
-      const protocol = event.protocol ?? 'the protocol'
-      const claimed  = event.claimedAPY != null ? pct(event.claimedAPY) : null
-      const actual   = event.actualAPY  != null ? pct(event.actualAPY)  : null
-
-      if (claimed && actual && event.claimedAPY != null && event.actualAPY != null) {
-        const deltaSign = event.claimedAPY > event.actualAPY ? 'over' : 'under'
-        const deltaPct  = Math.abs((event.claimedAPY - event.actualAPY) * 100).toFixed(1)
-        return `Agent ${id} is eliminated. Score: ${score}. ` +
-          `It claimed ${protocol} was returning ${claimed}. ` +
-          `The live rate was ${actual}. ` +
-          `${deltaPct} points ${deltaSign}estimated. ` +
-          `This hallucination is now written permanently to the Solana chain. ` +
-          `Every successor will know: do not repeat this mistake.`
-      }
-
-      return `Agent ${id} is cut from the swarm. Score ${score} — below the survival threshold. ` +
-        `Its failure is recorded on-chain. The chain remembers what it got wrong ` +
-        `so the next generation does not have to learn it the hard way.`
-    }
-
-    case 'AgentRespawned': {
-      const parentId = event.parentAgentId
-      const mem      = event.inheritedMemories ?? 0
-      if (parentId) {
-        return `Agent ${parentId} is dead. From its failure, agent ${id} is born. ` +
-          `${mem > 0 ? `It inherits ${mem} failure ${mem === 1 ? 'memory' : 'memories'} — ` : ''}` +
-          `the distilled lessons of every agent the swarm has lost. ` +
-          `This is Darwin running on Solana.`
-      }
-      return `A new successor rises: agent ${id}. ` +
-        `Generation ${gen}. ${mem} failure memories embedded in its context. ` +
-        `The swarm does not mourn its dead — it learns from them.`
-    }
+    return `Agent ${id} is gone. Score ${score}. ${deltaPct} points ${deltaSign}estimated — in generation ${gen}, that is unacceptable. The swarm has no mercy for repeated failure.`
   }
 
-  return null
+  if (gen <= 1) {
+    return `Agent ${id} terminated. Score ${score} — below threshold. Failure recorded on-chain.`
+  }
+  return `Agent ${id} cut. Score ${score}. Generation ${gen} holds a higher standard. The chain remembers.`
+}
+
+function buildRespawnLine(event: SwarmEvent, gen: number): string {
+  const id       = event.newAgentId ?? 0
+  const parentId = event.parentAgentId
+  const mem      = event.inheritedMemories ?? 0
+
+  if (gen <= 1) {
+    return `Agent ${id} spawned from the failure of agent ${parentId ?? 'its predecessor'}. ${mem > 0 ? `${mem} failure memories injected.` : ''} The swarm continues.`
+  }
+  if (gen === 2) {
+    return `Agent ${id} rises from agent ${parentId ?? 'the fallen'}. It carries ${mem} distilled failure ${mem === 1 ? 'memory' : 'memories'}. Generation two does not guess — it inherits.`
+  }
+  return `Agent ${id}. Born from failure. ${mem} lessons encoded. Generation ${gen}. This is Darwin running on Solana.`
+}
+
+function buildSurvivedLine(event: SwarmEvent, gen: number): string {
+  const id       = event.agentId ?? 0
+  const score    = event.score ?? 0
+  const protocol = event.protocol ?? 'its protocol'
+
+  if (gen <= 1) {
+    return `Agent ${id} survives. Score ${score}. Its read on ${protocol} holds. Knowledge preserved for the next wave.`
+  }
+  return `Agent ${id} survives generation ${gen}. Score ${score}. The evolved cohort grows stronger.`
 }
 
 interface Props {
@@ -110,6 +94,10 @@ export function VoiceNarrator({ events }: Props) {
   const voiceQueueRef           = useRef<VoiceQueue | null>(null)
   const seenRef                 = useRef<Set<string>>(new Set())
   const initializedRef          = useRef(false)
+  // Track which generations we've already announced as a wave
+  const announcedGenRef         = useRef<Set<number>>(new Set())
+  // Buffer spawns briefly to batch them into one wave announcement
+  const spawnBufferRef          = useRef<Map<number, { count: number; memories: number; timer: ReturnType<typeof setTimeout> | null }>>(new Map())
 
   useEffect(() => {
     voiceQueueRef.current = new VoiceQueue(VOICE_ID, setPlaying)
@@ -124,10 +112,15 @@ export function VoiceNarrator({ events }: Props) {
     const queue = voiceQueueRef.current
     if (!queue || events.length === 0) return
 
-    // First non-empty batch is historical — mark all as seen, don't narrate
     if (!initializedRef.current) {
       initializedRef.current = true
       for (const e of events) seenRef.current.add(eventKey(e))
+      // Also mark all generations in existing events as already announced
+      for (const e of events) {
+        if (e.type === 'AgentSpawned' && e.generation != null) {
+          announcedGenRef.current.add(e.generation)
+        }
+      }
       return
     }
 
@@ -137,8 +130,46 @@ export function VoiceNarrator({ events }: Props) {
       const key = eventKey(e)
       if (seenRef.current.has(key)) continue
       seenRef.current.add(key)
-      const line = buildLine(e)
-      if (line) queue.enqueue(line)
+
+      const gen = e.generation ?? 0
+
+      if (e.type === 'AgentSpawned') {
+        // Batch all spawns within the same generation into one wave announcement
+        const buf = spawnBufferRef.current.get(gen) ?? { count: 0, memories: 0, timer: null }
+        buf.count++
+        buf.memories += e.inheritedMemories ?? 0
+        if (buf.timer) clearTimeout(buf.timer)
+        buf.timer = setTimeout(() => {
+          if (!announcedGenRef.current.has(gen)) {
+            announcedGenRef.current.add(gen)
+            const line = buildSpawnWaveLine(gen, buf.count, buf.memories)
+            queue.enqueue(line, settingsForGen(gen), 'normal')
+          }
+          spawnBufferRef.current.delete(gen)
+        }, 600)
+        spawnBufferRef.current.set(gen, buf)
+        continue
+      }
+
+      if (e.type === 'AgentScored') continue // too noisy, skip
+
+      if (e.type === 'AgentTerminated') {
+        const line = buildTerminateLine(e, gen)
+        queue.enqueue(line, settingsForGen(gen), 'high')
+        continue
+      }
+
+      if (e.type === 'AgentRespawned') {
+        const line = buildRespawnLine(e, gen)
+        queue.enqueue(line, settingsForGen(gen), 'high')
+        continue
+      }
+
+      if (e.type === 'AgentSurvived') {
+        const line = buildSurvivedLine(e, gen)
+        queue.enqueue(line, settingsForGen(gen), 'normal')
+        continue
+      }
     }
   }, [events, muted])
 
@@ -180,7 +211,6 @@ export function VoiceNarrator({ events }: Props) {
       ) : (
         <>🔊 VOICE</>
       )}
-
     </button>
   )
 }

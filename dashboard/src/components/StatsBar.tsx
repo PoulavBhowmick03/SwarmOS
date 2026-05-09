@@ -119,6 +119,7 @@ export function StatsBar({ swarm, isLoading, survivalRate, avgScore, bestAPY, ev
         </span>
         <div style={{ width: 1, height: 14, background: '#1e1e2c', margin: '0 4px' }}/>
         {[
+          { href: '/demo',    label: 'Demo'    },
           { href: '/ledger',  label: 'Ledger'  },
           { href: '/network', label: 'Network' },
           { href: '/lineage', label: 'Lineage' },

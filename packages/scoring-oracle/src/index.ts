@@ -27,9 +27,14 @@ app.get('/payments', (_req, res) => {
 app.use(createX402EvaluateMiddleware())
 app.use('/evaluate', createEvaluateRouter(payments))
 
-app.listen(port, () => {
-  console.log(`Oracle running on :${port}`)
-})
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`Oracle running on :${port}`)
+  })
+}
+
+export default app
+module.exports = app
 
 function findRepoRoot(startDir: string): string {
   let current = startDir
@@ -37,7 +42,7 @@ function findRepoRoot(startDir: string): string {
   for (;;) {
     if (fs.existsSync(path.join(current, 'Anchor.toml'))) return current
     const parent = path.dirname(current)
-    if (parent === current) return process.cwd()
+    if (parent === current) return startDir
     current = parent
   }
 }

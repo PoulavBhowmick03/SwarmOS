@@ -33,6 +33,12 @@ pub fn handler(ctx: Context<SubmitScore>, _agent_id: u64, score: u8) -> Result<(
         SwarmError::InvalidAgentStatus
     );
 
+    // Sanity check: extremely high APY claims cannot get top scores.
+    // This prevents a corrupt oracle from covering up hallucinations.
+    if agent.claimed_apy_bps > 5000 && score > 70 {
+        return err!(SwarmError::SuspiciousScore);
+    }
+
     agent.score = score;
     agent.status = AgentStatus::Scored;
 

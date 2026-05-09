@@ -64,7 +64,7 @@ async function scoreYieldOptimizer(
   const relevance = scoreYieldRelevance(parsed)
   const { score: accuracy, details } = scoreYieldAccuracy(parsed, liveYields)
   const rawTotal = clamp(Math.round(relevance + accuracy + efficiency), 0, 100)
-  const total = applyDemoVariance(rawTotal, agentId, lineageMemoryCount)
+  const total = rawTotal
   const feedback =
     total < 60
       ? `Failed: ${details.reason}`

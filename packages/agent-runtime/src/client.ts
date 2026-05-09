@@ -8,11 +8,24 @@ import {
   Transaction,
   TransactionSignature
 } from '@solana/web3.js'
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync
+} from '@solana/spl-token'
 import fs from 'fs'
 import path from 'path'
 import { AgentAccount, AgentStatus, LineageMemory, SwarmConfig, TaskType } from './types'
 
 type AnyProgram = Program<Idl> & Record<string, any>
+
+const DEVNET_USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+
+export interface SpawnAgentClaim {
+  claimedApyBps: number
+  claimedProtocol: string
+  taskOutputHash: Buffer
+}
 
 function keypairToAnchorWallet(keypair: Keypair): Wallet {
   return {
@@ -46,6 +59,14 @@ function ensureHash32(hash?: Buffer): number[] {
     Buffer.from(hash).copy(out, 0, 0, Math.min(32, hash.length))
   }
   return Array.from(out)
+}
+
+function normalizeSpawnClaim(claim?: SpawnAgentClaim): SpawnAgentClaim {
+  return {
+    claimedApyBps: Math.max(0, Math.min(10_000, Math.round(claim?.claimedApyBps ?? 0))),
+    claimedProtocol: (claim?.claimedProtocol || 'unknown').slice(0, 32),
+    taskOutputHash: claim?.taskOutputHash ?? Buffer.alloc(32)
+  }
 }
 
 function numberFromAnchor(value: any, fallback = 0): number {
@@ -152,6 +173,10 @@ export class SwarmOSClient {
     )[0]
   }
 
+  agentUsdcATA(agent: PublicKey, mint?: PublicKey): PublicKey {
+    return getAssociatedTokenAddressSync(mint ?? this.usdcMint(), agent, true)
+  }
+
   async initializeSwarm(config: SwarmConfig): Promise<TransactionSignature> {
     throw new Error('initializeSwarm requires a scoring oracle and treasury public key')
   }
@@ -187,22 +212,36 @@ export class SwarmOSClient {
     parentId: number | null,
     _generation: number,
     _taskType: TaskType,
-    lineageHash?: Buffer
+    lineageHash?: Buffer,
+    claim?: SpawnAgentClaim
   ): Promise<TransactionSignature> {
     const swarm = toPublicKey(swarmAddress)
     const agent = this.agentPDA(swarm, agentId)
     if (!this.program) return this.mockSignature(`spawnAgent:${agentId}`)
 
+    const usdcMint = this.usdcMint()
+    const agentUsdcAta = this.agentUsdcATA(agent, usdcMint)
+    const swarmTreasury = await this.requireSwarmTreasury(swarm)
+    const spawnClaim = normalizeSpawnClaim(claim)
+
     const builder = this.program.methods
-      .spawnAgent(
-        new BN(agentId),
-        parentId == null ? null : new BN(parentId),
-        ensureHash32(lineageHash)
-      )
+      .spawnAgent({
+        agentId: new BN(agentId),
+        parentId: parentId == null ? null : new BN(parentId),
+        lineageHash: ensureHash32(lineageHash),
+        claimedApyBps: spawnClaim.claimedApyBps,
+        claimedProtocol: spawnClaim.claimedProtocol,
+        taskOutputHash: ensureHash32(spawnClaim.taskOutputHash)
+      })
       .accounts({
-        swarm,
         agent,
+        agentUsdcAta,
+        swarm,
+        swarmTreasury,
         authority: this.wallet.publicKey,
+        usdcMint,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId
       })
 
@@ -241,13 +280,21 @@ export class SwarmOSClient {
     const lineage = this.lineagePDA(swarm, agentId)
     if (!this.program) return this.mockSignature(`evaluateAndPrune:${agentId}`)
 
+    const usdcMint = this.usdcMint()
+    const agentUsdcAta = this.agentUsdcATA(agent, usdcMint)
+    const swarmTreasury = await this.requireSwarmTreasury(swarm)
+
     const builder = this.program.methods
       .evaluateAndPrune(new BN(agentId), ensureHash32(failureReasonHash), arweaveUri)
       .accounts({
-        swarm,
         agent,
         lineageMemory: lineage,
+        swarm,
+        agentUsdcAta,
+        swarmTreasury,
         authority: this.wallet.publicKey,
+        usdcMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId
       })
 
@@ -385,6 +432,24 @@ export class SwarmOSClient {
     return { [key]: {} }
   }
 
+  private usdcMint(): PublicKey {
+    return new PublicKey(process.env.USDC_MINT_DEVNET || DEVNET_USDC)
+  }
+
+  private async requireSwarmTreasury(swarm: PublicKey): Promise<PublicKey> {
+    if (!this.program) {
+      throw new Error('Cannot resolve swarm treasury without an Anchor program client')
+    }
+
+    const account = await (this.program.account as any).swarm.fetch(swarm)
+    const treasury = account?.treasury
+    if (!treasury) {
+      throw new Error(`Swarm ${swarm.toBase58()} does not have a treasury token account`)
+    }
+
+    return treasury instanceof PublicKey ? treasury : new PublicKey(treasury.toBase58?.() ?? treasury)
+  }
+
   private normalizeAgentAccount(raw: any): AgentAccount {
     return {
       agentId: numberFromAnchor(raw.agentId),
@@ -395,6 +460,9 @@ export class SwarmOSClient {
       status: normalizeStatus(raw.status),
       score: numberFromAnchor(raw.score),
       lineageHash: bufferFromAnchor(raw.lineageHash),
+      claimedApyBps: numberFromAnchor(raw.claimedApyBps),
+      claimedProtocol: String(raw.claimedProtocol ?? ''),
+      taskOutputHash: bufferFromAnchor(raw.taskOutputHash),
       spawnTimestamp: numberFromAnchor(raw.spawnTimestamp),
       terminationTimestamp:
         raw.terminationTimestamp == null ? null : numberFromAnchor(raw.terminationTimestamp)

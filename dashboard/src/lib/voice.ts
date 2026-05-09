@@ -3,8 +3,14 @@ export interface VoiceSettings {
   similarity_boost: number
 }
 
+interface QueueItem {
+  text: string
+  settings: VoiceSettings
+  priority: 'high' | 'normal'
+}
+
 export class VoiceQueue {
-  private queue: string[] = []
+  private queue: QueueItem[] = []
   private isPlaying = false
   private muted = false
   readonly voiceId: string
@@ -15,17 +21,28 @@ export class VoiceQueue {
     this.onPlayingChange = onPlayingChange
   }
 
-  enqueue(text: string): void {
+  enqueue(text: string, settings?: VoiceSettings, priority: 'high' | 'normal' = 'normal'): void {
     if (this.muted) return
-    this.queue.push(text)
+    const item: QueueItem = {
+      text,
+      settings: settings ?? { stability: 0.5, similarity_boost: 0.75 },
+      priority,
+    }
+    if (priority === 'high') {
+      // High-priority events (terminate, respawn) flush the backlog and jump in next
+      this.queue = this.queue.filter((q) => q.priority === 'high')
+      this.queue.unshift(item)
+    } else {
+      // Normal events: drop if queue is already backed up
+      if (this.queue.length >= 2) return
+      this.queue.push(item)
+    }
     if (!this.isPlaying) void this.processQueue()
   }
 
   setMuted(muted: boolean): void {
     this.muted = muted
-    if (muted) {
-      this.queue = []
-    }
+    if (muted) this.queue = []
   }
 
   clear(): void {
@@ -47,11 +64,11 @@ export class VoiceQueue {
       return
     }
 
-    const text = this.queue.shift()!
+    const item = this.queue.shift()!
     this.setPlaying(true)
 
     try {
-      await this.speak(text)
+      await this.speak(item.text, item.settings)
     } catch (err) {
       console.error('[VoiceQueue] speak error:', err)
     }
@@ -59,7 +76,7 @@ export class VoiceQueue {
     void this.processQueue()
   }
 
-  private async speak(text: string): Promise<void> {
+  private async speak(text: string, settings: VoiceSettings): Promise<void> {
     const res = await fetch('/api/voice', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -67,7 +84,7 @@ export class VoiceQueue {
         text,
         voiceId: this.voiceId,
         model_id: 'eleven_turbo_v2',
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 } satisfies VoiceSettings,
+        voice_settings: settings,
       }),
     })
 
@@ -78,14 +95,8 @@ export class VoiceQueue {
 
     await new Promise<void>((resolve) => {
       const audio = new Audio(url)
-      audio.onended = () => {
-        URL.revokeObjectURL(url)
-        resolve()
-      }
-      audio.onerror = () => {
-        URL.revokeObjectURL(url)
-        resolve()
-      }
+      audio.onended = () => { URL.revokeObjectURL(url); resolve() }
+      audio.onerror = () => { URL.revokeObjectURL(url); resolve() }
       void audio.play().catch(() => resolve())
     })
   }

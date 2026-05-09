@@ -2,6 +2,7 @@ use crate::errors::SwarmError;
 use crate::state::*;
 use crate::{AgentSurvived, AgentTerminated};
 use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
 #[derive(Accounts)]
 #[instruction(agent_id: u64)]
@@ -29,9 +30,26 @@ pub struct EvaluateAndPrune<'info> {
     )]
     pub swarm: Account<'info, Swarm>,
 
+    #[account(
+        mut,
+        associated_token::mint = usdc_mint,
+        associated_token::authority = agent,
+    )]
+    pub agent_usdc_ata: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = swarm_treasury.key() == swarm.treasury,
+        constraint = swarm_treasury.mint == usdc_mint.key()
+    )]
+    pub swarm_treasury: Account<'info, TokenAccount>,
+
     #[account(mut)]
     pub authority: Signer<'info>,
 
+    pub usdc_mint: Account<'info, Mint>,
+
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
@@ -75,6 +93,31 @@ pub fn handler(
         lineage.failure_reason_hash = failure_reason_hash;
         lineage.arweave_uri = arweave_uri;
         lineage.timestamp = clock.unix_timestamp;
+
+        let agent_balance = ctx.accounts.agent_usdc_ata.amount;
+        if agent_balance > 0 {
+            let agent_id_bytes = agent_id.to_le_bytes();
+            let agent_bump = [ctx.accounts.agent.bump];
+            let signer_seeds: &[&[u8]] = &[
+                b"agent",
+                swarm_key.as_ref(),
+                agent_id_bytes.as_ref(),
+                agent_bump.as_ref(),
+            ];
+
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.agent_usdc_ata.to_account_info(),
+                        to: ctx.accounts.swarm_treasury.to_account_info(),
+                        authority: ctx.accounts.agent.to_account_info(),
+                    },
+                    &[signer_seeds],
+                ),
+                agent_balance,
+            )?;
+        }
 
         emit!(AgentTerminated {
             agent_id,

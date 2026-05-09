@@ -6,10 +6,10 @@ import { useSwarm }  from '@/hooks/useSwarm'
 import { useAgents } from '@/hooks/useAgents'
 
 const SWARM_ADDRESS =
-  process.env.NEXT_PUBLIC_SWARM_ADDRESS ?? '9o3g8JLAFcjaNnp5d6VHC1kM6DZCQRaVM7uuui4yBPrm'
+  process.env.NEXT_PUBLIC_SWARM_ADDRESS ?? '6zbt4nwzetSShWEQi6AnrVwjRqLxANF9acYpPu4hQWVF'
 
-const PROGRAM_ID  = 'D9moMaWzJw3LVxnZkiXS7xrTUHmF4n3hJeDWCvbB7B1a'
-const RPC_URL     = process.env.NEXT_PUBLIC_SOLANA_RPC ?? 'https://api.devnet.solana.com'
+const PROGRAM_ID  = process.env.NEXT_PUBLIC_SWARM_PROGRAM_ID ?? 'D9moMaWzJw3LVxnZkiXS7xrTUHmF4n3hJeDWCvbB7B1a'
+const RPC_URL     = process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com'
 const ORACLE_URL  = process.env.NEXT_PUBLIC_SCORING_ORACLE_URL ?? 'http://localhost:3001'
 
 function PageNav() {

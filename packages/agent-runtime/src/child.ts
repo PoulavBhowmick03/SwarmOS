@@ -57,7 +57,7 @@ export class ChildAgent {
     const systemPrompt = this.buildPrompt(liveYields)
     const userPrompt = 'Execute the task now. Return only the requested JSON object, with no markdown fences.'
 
-    console.log(`[Agent ${this.agentId} gen${this.generation}] prompt[:200]: ${systemPrompt.slice(0, 200).replace(/\n/g, ' ')}`)
+    console.log(`Agent ${this.agentId} prompt context: ${systemPrompt.slice(0, 300)}...`)
     if (this.lineageContext.length > 0) {
       const marker = systemPrompt.indexOf('LINEAGE MEMORY')
       const start = marker >= 0 ? marker : 0
@@ -77,6 +77,7 @@ export class ChildAgent {
 
       if (text) {
         console.log(`[Agent ${this.agentId}] raw output: ${text.slice(0, 300).replace(/\n/g, ' ')}`)
+        this.logRecommendation(text)
         this.lastExecutionTimeMs = Date.now() - startedAt
         this.lastOutput = text
         return text
@@ -84,6 +85,7 @@ export class ChildAgent {
 
       console.warn(`Venice execution failed or returned empty output, using demo fallback output`)
       const mock = this.mockOutput(liveYields)
+      this.logRecommendation(mock)
       this.lastExecutionTimeMs = Date.now() - startedAt
       this.lastOutput = mock
       return mock
@@ -91,6 +93,7 @@ export class ChildAgent {
 
     if (provider === 'mock') {
       const mock = this.mockOutput(liveYields)
+      this.logRecommendation(mock)
       this.lastExecutionTimeMs = Date.now() - startedAt
       this.lastOutput = mock
       return mock
@@ -118,13 +121,14 @@ export class ChildAgent {
         .trim()
 
       console.log(`[Agent ${this.agentId}] raw output: ${text.slice(0, 300).replace(/\n/g, ' ')}`)
-
+      this.logRecommendation(text)
       this.lastExecutionTimeMs = Date.now() - startedAt
       this.lastOutput = text
       return text
     } catch (error) {
       console.warn(`Anthropic execution failed, using demo fallback output: ${errorMessage(error)}`)
       const mock = this.mockOutput(liveYields)
+      this.logRecommendation(mock)
       this.lastExecutionTimeMs = Date.now() - startedAt
       this.lastOutput = mock
       return mock
@@ -301,6 +305,25 @@ export class ChildAgent {
           recommendation:
             'Prefer diversified USDC lending routes and re-check live utilization before deployment.'
         })
+    }
+  }
+
+  private logRecommendation(text: string): void {
+    if (this.taskType !== 'YieldOptimizer') return
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>
+      const protocol = String(parsed.recommendedProtocol ?? parsed.bestProtocol ?? 'unknown')
+      const rawApy = Number(parsed.expectedAPY ?? parsed.currentAPY ?? NaN)
+      const apyPct = Number.isFinite(rawApy) ? (rawApy > 1 ? rawApy : rawApy * 100) : 0
+      console.log(
+        `Agent ${this.agentId} recommendation: ` +
+        `${protocol} at ${apyPct.toFixed(2)}% APY` +
+        (this.lineageContext.length > 0
+          ? ` (inheriting ${this.lineageContext.length} failure memories)`
+          : ' (no lineage context)')
+      )
+    } catch {
+      console.log(`Agent ${this.agentId} recommendation: (could not parse output)`)
     }
   }
 }

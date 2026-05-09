@@ -9,7 +9,7 @@
 
 ## What is SwarmOS?
 
-SwarmOS is a Darwinian AI agent swarm protocol on Solana. A parent agent spawns a population of child agents to compete on a task. They are scored, evaluated, and the weakest are terminated on-chain. Before respawning successors, the system reads the failure memory of every dead agent — stored immutably in Solana account state — and injects it into the next generation's context.
+SwarmOS is a Darwinian AI agent swarm protocol on Solana (Program ID: `D9moMaWzJw3LVxnZkiXS7xrTUHmF4n3hJeDWCvbB7B1a`). A parent agent spawns a population of child agents to compete on a task. They are scored, evaluated, and the weakest are terminated on-chain. Before respawning successors, the system reads the failure memory of every dead agent — stored immutably in Solana account state — and injects it into the next generation's context.
 
 The swarm evolves. Each generation is smarter than the last because it knows exactly how the previous one died.
 
@@ -109,7 +109,7 @@ timestamp: i64
 | `submit_score`       | Called by oracle after x402 payment confirmed                  |
 | `evaluate_and_prune` | Terminate below-threshold agents, write LineageMemory          |
 | `respawn_successor`  | Spawn new Agent inheriting lineage of a terminated agent       |
-| `fund_treasury`      | Accept USDC into Swarm treasury (receives LI.FI bridge output) |
+| `fund_treasury`      | The Swarm treasury is a USDC SPL token account passed in at initialization. LI.FI bridges from any chain directly to this Solana address. |
 
 ---
 
@@ -168,11 +168,32 @@ This makes SwarmOS feel alive. The voice layer is not cosmetic — it's the inte
 
 ## Contract Deployment
 
-| Network       | Program ID          |
-| ------------- | ------------------- |
-| Solana Devnet | `[PROGRAM_ID_HERE]` |
+| Network       | Address Type | Address |
+| ------------- | ------------ | ------- |
+| Solana Devnet | Program ID | `D9moMaWzJw3LVxnZkiXS7xrTUHmF4n3hJeDWCvbB7B1a` |
+| Solana Devnet | Active Swarm PDA | `6zbt4nwzetSShWEQi6AnrVwjRqLxANF9acYpPu4hQWVF` |
+| Solana Devnet | Oracle Wallet | `D14J1wLNEZkHEBcM9NW9nUwCkhxuJSUvE5G3E38frDJs` |
 
 **USDC Mint (Devnet)**: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`
+
+---
+
+## Test Results
+
+```
+anchor test --provider.cluster devnet --skip-deploy
+
+  swarm-os
+    ✔ initializes a swarm (2023ms)
+    ✔ spawns 3 agents (5416ms)
+    ✔ submits scores via oracle signer (3139ms)
+    ✔ evaluates: 2 survive, 1 terminated (2610ms)
+    ✔ verifies LineageMemory PDA created for terminated agent (82ms)
+    ✔ respawns successor with lineage hash (2272ms)
+    ✔ verifies successor inherits failure_reason_hash (329ms)
+
+  7 passing (18s)
+```
 
 ---
 
@@ -180,7 +201,21 @@ This makes SwarmOS feel alive. The voice layer is not cosmetic — it's the inte
 
 - **Dashboard**: [swarmos.vercel.app](https://swarmos.vercel.app)
 - **Demo Video**: [YouTube](https://youtube.com/[LINK])
-- **Scoring Oracle**: [swarmos-oracle.railway.app](https://swarmos-oracle.railway.app)
+- **Scoring Oracle**: [swarmos-scoring-oracle.vercel.app](https://swarmos-scoring-oracle.vercel.app) <!-- Express API deployed on Vercel -->
+
+## Live Run Example
+
+```
+Generation 2 starting
+Injecting 22 failure memories into generation 2
+Agent 148 scored 100/100  ✓ survived — Kamino SOL/USDC at 9.26%
+Agent 146 scored 50/100   ✗ terminated — claimed JupiterLend 10.45%, real 4.4%
+Agent 147 scored 83/100   ✓ survived — JupiterLend at 4.4%
+Generation 2 complete: 2 survived, 1 terminated
+Reclaimed 0.009995 SOL from terminated agent 146
+Generation 3 starting
+Injecting 23 failure memories into generation 3
+```
 
 ---
 
@@ -221,8 +256,11 @@ cp .env.example .env
 # ELEVENLABS_API_KEY + ELEVENLABS_VOICE_ID
 # X402_FACILITATOR_URL=https://x402.org/facilitator
 # USDC_MINT_DEVNET=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
-# SWARM_PROGRAM_ID=<deployed program id>
-# SCORING_ORACLE_URL=<your railway url>
+# SWARM_PROGRAM_ID=D9moMaWzJw3LVxnZkiXS7xrTUHmF4n3hJeDWCvbB7B1a
+# NEXT_PUBLIC_SWARM_ADDRESS=6zbt4nwzetSShWEQi6AnrVwjRqLxANF9acYpPu4hQWVF
+# SCORING_ORACLE_URL=https://swarmos-scoring-oracle.vercel.app
+# NEXT_PUBLIC_ORACLE_URL=https://swarmos-scoring-oracle.vercel.app
+# NEXT_PUBLIC_SCORING_ORACLE_URL=https://swarmos-scoring-oracle.vercel.app
 ```
 
 Lineage memories keep the same on-chain PDA/hash shape, but the agent runtime now stores the mock off-chain payload locally under `packages/agent-runtime/.lineage-memory/` and, when `VENICE_API_KEY` is set, asks Venice to turn failures into compact post-mortems before injecting them into the next generation. Tune `LINEAGE_CONTEXT_RULES`, `LINEAGE_RAW_MEMORY_LIMIT`, and `LINEAGE_PROMPT_MAX_CHARS` if prompts get too large.
@@ -234,13 +272,13 @@ For Venice-powered runs, the runtime uses JSON mode and disables visible reasoni
 ```bash
 cd packages/scoring-oracle
 npm run dev
-# Deploy to Railway: railway up
+# Production oracle: https://swarmos-scoring-oracle.vercel.app
 ```
 
 ### Run Dashboard
 
 ```bash
-cd packages/dashboard
+cd dashboard
 npm run dev
 # Deploy to Vercel: vercel deploy
 ```

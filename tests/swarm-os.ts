@@ -9,9 +9,13 @@ import {
   Transaction,
 } from "@solana/web3.js";
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   createMint,
   createAccount,
+  getAccount,
+  getAssociatedTokenAddressSync,
+  mintTo,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import * as crypto from "crypto";
@@ -49,6 +53,10 @@ function findLineagePda(swarm: PublicKey, agentId: BN, programId: PublicKey) {
   );
 }
 
+function findAgentUsdcAta(agent: PublicKey, mint: PublicKey): PublicKey {
+  return getAssociatedTokenAddressSync(mint, agent, true);
+}
+
 async function withBlockhashRetry<T>(send: () => Promise<T>, attempts = 5): Promise<T> {
   let lastError: unknown;
 
@@ -83,8 +91,29 @@ describe("swarm-os", () => {
   let treasury: PublicKey;
   let usdcMint: PublicKey;
 
+  const AGENT_USDC_FUNDING_AMOUNT = 10_000;
+  const INITIAL_TREASURY_USDC = 1_000_000;
   const AGENT_IDS = [new BN(0), new BN(1), new BN(2)];
-  const SUCCESSOR_ID = new BN(3);
+  const HIGH_APY_AGENT_ID = new BN(3);
+  const SUCCESSOR_ID = new BN(4);
+
+  const AGENT_CLAIMS = [
+    {
+      claimedApyBps: 926,
+      claimedProtocol: "Kamino",
+      output: JSON.stringify({ protocol: "Kamino", apy: 0.0926 }),
+    },
+    {
+      claimedApyBps: 440,
+      claimedProtocol: "JupiterLend",
+      output: JSON.stringify({ protocol: "JupiterLend", apy: 0.044 }),
+    },
+    {
+      claimedApyBps: 1120,
+      claimedProtocol: "Drift",
+      output: JSON.stringify({ protocol: "Drift", apy: 0.112 }),
+    },
+  ];
 
   // Scores: agent 0 = 75 (survive), agent 1 = 45 (terminate), agent 2 = 82 (survive)
   const SCORES = [75, 45, 82];
@@ -121,12 +150,20 @@ describe("swarm-os", () => {
       6
     );
 
-    // Create treasury token account
+    // Create and fund the swarm treasury token account
     treasury = await createAccount(
       provider.connection,
       authority,
       usdcMint,
       authority.publicKey
+    );
+    await mintTo(
+      provider.connection,
+      authority,
+      usdcMint,
+      treasury,
+      authority,
+      INITIAL_TREASURY_USDC
     );
 
     [swarmPda] = findSwarmPda(authority.publicKey, program.programId);
@@ -151,6 +188,7 @@ describe("swarm-os", () => {
     );
 
     const swarm = await program.account.swarm.fetch(swarmPda, "confirmed");
+    const treasuryAccount = await getAccount(provider.connection, treasury, "confirmed");
 
     assert.equal(swarm.name, "TestSwarm");
     assert.equal(swarm.scoringThreshold, SCORING_THRESHOLD);
@@ -160,25 +198,41 @@ describe("swarm-os", () => {
     assert.ok(swarm.authority.equals(authority.publicKey));
     assert.ok(swarm.scoringOracle.equals(oracle.publicKey));
     assert.ok(swarm.treasury.equals(treasury));
+    assert.equal(Number(treasuryAccount.amount), INITIAL_TREASURY_USDC);
   });
 
   // ---------------------------------------------------------------------------
   // 2. Spawn 3 agents
   // ---------------------------------------------------------------------------
 
-  it("spawns 3 agents", async () => {
+  it("spawns 3 agents with stored claims and USDC ATAs", async () => {
     const zeroHash = Array(32).fill(0);
 
-    for (const agentId of AGENT_IDS) {
+    for (let i = 0; i < AGENT_IDS.length; i++) {
+      const agentId = AGENT_IDS[i];
+      const claim = AGENT_CLAIMS[i];
       const [agentPda] = findAgentPda(swarmPda, agentId, program.programId);
+      const agentUsdcAta = findAgentUsdcAta(agentPda, usdcMint);
 
       await withBlockhashRetry(() =>
         program.methods
-          .spawnAgent(agentId, null, zeroHash)
+          .spawnAgent({
+            agentId,
+            parentId: null,
+            lineageHash: zeroHash,
+            claimedApyBps: claim.claimedApyBps,
+            claimedProtocol: claim.claimedProtocol,
+            taskOutputHash: sha256(claim.output),
+          })
           .accounts({
             agent: agentPda,
+            agentUsdcAta,
             swarm: swarmPda,
+            swarmTreasury: treasury,
             authority: authority.publicKey,
+            usdcMint,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
           .signers([authority])
@@ -190,10 +244,12 @@ describe("swarm-os", () => {
     assert.equal(swarm.activeAgentCount, 3, "should have 3 active agents");
     assert.ok(swarm.totalSpawned.eqn(3), "totalSpawned should be 3");
 
-    // Verify each agent account
+    // Verify each agent account and its funded USDC ATA
     for (let i = 0; i < AGENT_IDS.length; i++) {
       const [agentPda] = findAgentPda(swarmPda, AGENT_IDS[i], program.programId);
+      const agentUsdcAta = findAgentUsdcAta(agentPda, usdcMint);
       const agent = await program.account.agent.fetch(agentPda, "confirmed");
+      const agentTokenAccount = await getAccount(provider.connection, agentUsdcAta, "confirmed");
 
       assert.ok(agent.agentId.eqn(i), `agent ${i} id mismatch`);
       assert.ok(agent.swarm.equals(swarmPda));
@@ -201,11 +257,135 @@ describe("swarm-os", () => {
       assert.equal(agent.score, 0);
       assert.isNull(agent.parentId);
       assert.deepEqual(agent.status, { active: {} });
+      assert.equal(agent.claimedApyBps, AGENT_CLAIMS[i].claimedApyBps);
+      assert.equal(agent.claimedProtocol, AGENT_CLAIMS[i].claimedProtocol);
+      assert.deepEqual(agent.taskOutputHash, sha256(AGENT_CLAIMS[i].output));
+      assert.ok(agentTokenAccount.owner.equals(agentPda));
+      assert.ok(agentTokenAccount.mint.equals(usdcMint));
+      assert.equal(Number(agentTokenAccount.amount), AGENT_USDC_FUNDING_AMOUNT);
     }
+
+    const treasuryAccount = await getAccount(provider.connection, treasury, "confirmed");
+    assert.equal(
+      Number(treasuryAccount.amount),
+      INITIAL_TREASURY_USDC - AGENT_IDS.length * AGENT_USDC_FUNDING_AMOUNT,
+      "treasury should fund each spawned agent"
+    );
   });
 
   // ---------------------------------------------------------------------------
-  // 3. Submit scores
+  // 3. Suspicious score rejection and token reclaim
+  // ---------------------------------------------------------------------------
+
+  it("rejects suspicious top scores for extreme APY claims and reclaims USDC on termination", async () => {
+    const zeroHash = Array(32).fill(0);
+    const [agentPda] = findAgentPda(swarmPda, HIGH_APY_AGENT_ID, program.programId);
+    const [lineagePda] = findLineagePda(swarmPda, HIGH_APY_AGENT_ID, program.programId);
+    const agentUsdcAta = findAgentUsdcAta(agentPda, usdcMint);
+
+    await withBlockhashRetry(() =>
+      program.methods
+        .spawnAgent({
+          agentId: HIGH_APY_AGENT_ID,
+          parentId: null,
+          lineageHash: zeroHash,
+          claimedApyBps: 6000,
+          claimedProtocol: "ImaginaryStablecoinVault",
+          taskOutputHash: sha256(JSON.stringify({ protocol: "ImaginaryStablecoinVault", apy: 0.6 })),
+        })
+        .accounts({
+          agent: agentPda,
+          agentUsdcAta,
+          swarm: swarmPda,
+          swarmTreasury: treasury,
+          authority: authority.publicKey,
+          usdcMint,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc({ commitment: "confirmed" })
+    );
+
+    try {
+      await withBlockhashRetry(() =>
+        program.methods
+          .submitScore(HIGH_APY_AGENT_ID, 90)
+          .accounts({
+            agent: agentPda,
+            swarm: swarmPda,
+            oracle: oracle.publicKey,
+          })
+          .signers([oracle])
+          .rpc({ commitment: "confirmed" })
+      );
+      assert.fail("submitScore should reject a suspicious high score");
+    } catch (error) {
+      assert.include(String(error), "SuspiciousScore");
+    }
+
+    const stillActiveAgent = await program.account.agent.fetch(agentPda, "confirmed");
+    assert.equal(stillActiveAgent.score, 0);
+    assert.deepEqual(stillActiveAgent.status, { active: {} });
+
+    await withBlockhashRetry(() =>
+      program.methods
+        .submitScore(HIGH_APY_AGENT_ID, 55)
+        .accounts({
+          agent: agentPda,
+          swarm: swarmPda,
+          oracle: oracle.publicKey,
+        })
+        .signers([oracle])
+        .rpc({ commitment: "confirmed" })
+    );
+
+    const scoredAgent = await program.account.agent.fetch(agentPda, "confirmed");
+    assert.equal(scoredAgent.score, 55);
+    assert.deepEqual(scoredAgent.status, { scored: {} });
+
+    const treasuryBefore = await getAccount(provider.connection, treasury, "confirmed");
+
+    await withBlockhashRetry(() =>
+      program.methods
+        .evaluateAndPrune(
+          HIGH_APY_AGENT_ID,
+          sha256("Extreme stablecoin APY claim failed on-chain sanity checks"),
+          "ar://high-apy-agent"
+        )
+        .accounts({
+          agent: agentPda,
+          lineageMemory: lineagePda,
+          swarm: swarmPda,
+          agentUsdcAta,
+          swarmTreasury: treasury,
+          authority: authority.publicKey,
+          usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc({ commitment: "confirmed" })
+    );
+
+    const treasuryAfter = await getAccount(provider.connection, treasury, "confirmed");
+    const agentTokenAccount = await getAccount(provider.connection, agentUsdcAta, "confirmed");
+    const terminatedAgent = await program.account.agent.fetch(agentPda, "confirmed");
+    const swarm = await program.account.swarm.fetch(swarmPda, "confirmed");
+
+    assert.equal(
+      Number(treasuryAfter.amount),
+      Number(treasuryBefore.amount) + AGENT_USDC_FUNDING_AMOUNT,
+      "termination should reclaim agent USDC to treasury"
+    );
+    assert.equal(Number(agentTokenAccount.amount), 0);
+    assert.deepEqual(terminatedAgent.status, { terminated: {} });
+    assert.equal(swarm.activeAgentCount, 3, "suspicious agent should be pruned");
+  });
+
+  // ---------------------------------------------------------------------------
+  // 4. Submit scores
   // ---------------------------------------------------------------------------
 
   it("submits scores: agent0=75, agent1=45, agent2=82", async () => {
@@ -236,8 +416,8 @@ describe("swarm-os", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 4. Evaluate and prune
-  //    agent0 (75) → survived, agent1 (45) → terminated, agent2 (82) → survived
+  // 5. Evaluate and prune
+  //    agent0 (75) -> survived, agent1 (45) -> terminated, agent2 (82) -> survived
   // ---------------------------------------------------------------------------
 
   it("evaluates agents: agent0 and agent2 survive, agent1 is terminated", async () => {
@@ -245,15 +425,23 @@ describe("swarm-os", () => {
     const agent1FailureText = "Agent 1 failed: poor yield optimization strategy";
     const agent1FailureHash = sha256(agent1FailureText);
     const agent1ArweaveUri = "ar://Qm000000000000000000000000000000000000000000";
+    let treasuryBeforeAgent1Termination = 0;
+    let treasuryAfterAgent1Termination = 0;
 
     for (let i = 0; i < AGENT_IDS.length; i++) {
       const agentId = AGENT_IDS[i];
       const [agentPda] = findAgentPda(swarmPda, agentId, program.programId);
       const [lineagePda] = findLineagePda(swarmPda, agentId, program.programId);
+      const agentUsdcAta = findAgentUsdcAta(agentPda, usdcMint);
 
       const isTerminated = i === 1;
       const failureHash = isTerminated ? agent1FailureHash : emptyHash;
       const arweaveUri = isTerminated ? agent1ArweaveUri : "";
+
+      if (isTerminated) {
+        const treasuryBefore = await getAccount(provider.connection, treasury, "confirmed");
+        treasuryBeforeAgent1Termination = Number(treasuryBefore.amount);
+      }
 
       await withBlockhashRetry(() =>
         program.methods
@@ -262,22 +450,33 @@ describe("swarm-os", () => {
             agent: agentPda,
             lineageMemory: lineagePda,
             swarm: swarmPda,
+            agentUsdcAta,
+            swarmTreasury: treasury,
             authority: authority.publicKey,
+            usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
           .signers([authority])
           .rpc({ commitment: "confirmed" })
       );
+
+      if (isTerminated) {
+        const treasuryAfter = await getAccount(provider.connection, treasury, "confirmed");
+        treasuryAfterAgent1Termination = Number(treasuryAfter.amount);
+      }
     }
 
     // Verify agent statuses
     const [agent0Pda] = findAgentPda(swarmPda, AGENT_IDS[0], program.programId);
     const [agent1Pda] = findAgentPda(swarmPda, AGENT_IDS[1], program.programId);
     const [agent2Pda] = findAgentPda(swarmPda, AGENT_IDS[2], program.programId);
+    const agent1UsdcAta = findAgentUsdcAta(agent1Pda, usdcMint);
 
     const agent0 = await program.account.agent.fetch(agent0Pda, "confirmed");
     const agent1 = await program.account.agent.fetch(agent1Pda, "confirmed");
     const agent2 = await program.account.agent.fetch(agent2Pda, "confirmed");
+    const agent1TokenAccount = await getAccount(provider.connection, agent1UsdcAta, "confirmed");
 
     assert.deepEqual(agent0.status, { survived: {} }, "agent0 should have survived");
     assert.deepEqual(agent1.status, { terminated: {} }, "agent1 should be terminated");
@@ -287,6 +486,12 @@ describe("swarm-os", () => {
       0,
       "agent1 termination timestamp should be set"
     );
+    assert.equal(Number(agent1TokenAccount.amount), 0, "terminated agent USDC ATA should be empty");
+    assert.equal(
+      treasuryAfterAgent1Termination,
+      treasuryBeforeAgent1Termination + AGENT_USDC_FUNDING_AMOUNT,
+      "agent1 USDC should return to treasury on termination"
+    );
 
     // All three agents are no longer Active after evaluation.
     const swarm = await program.account.swarm.fetch(swarmPda, "confirmed");
@@ -294,7 +499,7 @@ describe("swarm-os", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 5. Verify LineageMemory PDA was created for agent 1
+  // 6. Verify LineageMemory PDA was created for agent 1
   // ---------------------------------------------------------------------------
 
   it("verifies LineageMemory PDA was created for agent 1", async () => {
@@ -322,7 +527,7 @@ describe("swarm-os", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 6. Respawn successor for agent 1
+  // 7. Respawn successor for agent 1
   // ---------------------------------------------------------------------------
 
   it("respawns a successor for terminated agent 1", async () => {
@@ -345,11 +550,11 @@ describe("swarm-os", () => {
 
     const swarm = await program.account.swarm.fetch(swarmPda, "confirmed");
     assert.equal(swarm.activeAgentCount, 1, "should have 1 active agent after respawn");
-    assert.ok(swarm.totalSpawned.eqn(4), "totalSpawned should be 4");
+    assert.ok(swarm.totalSpawned.eqn(5), "totalSpawned should be 5");
   });
 
   // ---------------------------------------------------------------------------
-  // 7. Verify successor lineage_hash matches agent 1's failure_reason_hash
+  // 8. Verify successor lineage_hash matches agent 1's failure_reason_hash
   // ---------------------------------------------------------------------------
 
   it("verifies successor has lineage_hash matching agent1 failure_reason_hash", async () => {
@@ -359,7 +564,7 @@ describe("swarm-os", () => {
     const successor = await program.account.agent.fetch(successorPda, "confirmed");
     const lineage = await program.account.lineageMemory.fetch(agent1LineagePda, "confirmed");
 
-    assert.ok(successor.agentId.eqn(3), "successor agent id should be 3");
+    assert.ok(successor.agentId.eqn(4), "successor agent id should be 4");
     assert.ok(successor.generation.eqn(1), "successor should be generation 1");
     assert.deepEqual(successor.status, { active: {} }, "successor should be active");
     assert.isNotNull(successor.parentId, "successor should have a parent");

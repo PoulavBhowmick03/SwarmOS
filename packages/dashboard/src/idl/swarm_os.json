@@ -8,6 +8,30 @@
   },
   "instructions": [
     {
+      "name": "bump_generation",
+      "discriminator": [
+        232,
+        110,
+        55,
+        49,
+        45,
+        111,
+        171,
+        135
+      ],
+      "accounts": [
+        {
+          "name": "swarm",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "evaluate_and_prune",
       "discriminator": [
         104,
@@ -79,9 +103,110 @@
           "writable": true
         },
         {
+          "name": "agent_usdc_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "agent"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "swarm_treasury",
+          "writable": true
+        },
+        {
           "name": "authority",
           "writable": true,
           "signer": true
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
           "name": "system_program",
@@ -304,13 +429,107 @@
               },
               {
                 "kind": "arg",
-                "path": "agent_id"
+                "path": "args.agent_id"
               }
             ]
           }
         },
         {
+          "name": "agent_usdc_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "agent"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
           "name": "swarm",
+          "writable": true
+        },
+        {
+          "name": "swarm_treasury",
           "writable": true
         },
         {
@@ -319,28 +538,28 @@
           "signer": true
         },
         {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
       ],
       "args": [
         {
-          "name": "agent_id",
-          "type": "u64"
-        },
-        {
-          "name": "parent_id",
+          "name": "args",
           "type": {
-            "option": "u64"
-          }
-        },
-        {
-          "name": "lineage_hash",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
+            "defined": {
+              "name": "SpawnAgentArgs"
+            }
           }
         }
       ]
@@ -552,6 +771,11 @@
       "code": 6007,
       "name": "ArithmeticOverflow",
       "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6008,
+      "name": "SuspiciousScore",
+      "msg": "Oracle score is suspicious for the agent's claimed APY"
     }
   ],
   "types": [
@@ -600,6 +824,23 @@
           },
           {
             "name": "lineage_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "claimed_apy_bps",
+            "type": "u16"
+          },
+          {
+            "name": "claimed_protocol",
+            "type": "string"
+          },
+          {
+            "name": "task_output_hash",
             "type": {
               "array": [
                 "u8",
@@ -679,6 +920,10 @@
           {
             "name": "swarm",
             "type": "pubkey"
+          },
+          {
+            "name": "claimed_apy_bps",
+            "type": "u16"
           }
         ]
       }
@@ -791,6 +1036,50 @@
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SpawnAgentArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": "u64"
+          },
+          {
+            "name": "parent_id",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "lineage_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "claimed_apy_bps",
+            "type": "u16"
+          },
+          {
+            "name": "claimed_protocol",
+            "type": "string"
+          },
+          {
+            "name": "task_output_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           }
         ]
       }

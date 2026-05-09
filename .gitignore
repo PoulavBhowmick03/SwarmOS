@@ -27,3 +27,4 @@ agent/.next/
 judge_flow_state.json
 swarm_state.json
 swarm_events.json
+.swarm-lineage.json

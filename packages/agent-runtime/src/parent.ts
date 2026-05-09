@@ -21,7 +21,7 @@ import {
   transfer
 } from '@solana/spl-token'
 import { ChildAgent } from './child'
-import { SwarmOSClient } from './client'
+import { SpawnAgentClaim, SwarmOSClient } from './client'
 import { AgentAccount, LineageMemory, SwarmConfig, TaskType } from './types'
 import {
   generateVenicePostMortem,
@@ -39,6 +39,22 @@ const DEFAULT_ORACLE_WALLET = path.join(REPO_ROOT, 'packages/scoring-oracle/orac
 const AGENT_WALLET_DIR = path.join(REPO_ROOT, 'packages/agent-runtime/.agent-wallets')
 const SWARM_AUTHORITY_DIR = path.join(REPO_ROOT, 'packages/agent-runtime/.swarm-authorities')
 const STATE_ARCHIVE_DIR = path.join(REPO_ROOT, 'packages/agent-runtime/.archive')
+const LINEAGE_FILE = path.join(process.cwd(), '.swarm-lineage.json')
+
+function loadLineageStore(): Map<number, string> {
+  try {
+    const raw = fs.readFileSync(LINEAGE_FILE, 'utf8')
+    const obj = JSON.parse(raw)
+    return new Map(Object.entries(obj).map(([k, v]) => [Number(k), v as string]))
+  } catch {
+    return new Map()
+  }
+}
+
+function saveLineageStore(store: Map<number, string>): void {
+  const obj = Object.fromEntries(store)
+  fs.writeFileSync(LINEAGE_FILE, JSON.stringify(obj, null, 2))
+}
 
 type ReclaimableAgentWallet = Pick<ChildAgent, 'agentId' | 'wallet'>
 
@@ -54,7 +70,7 @@ export class ParentAgent {
   private failureTextByUri: Map<string, string>
   private failureHashByAgentId: Map<number, Buffer>
   private failureUriByAgentId: Map<number, string>
-  private failureSummaryByAgentId: Map<number, string>
+  private failureSummaries: Map<number, string> = loadLineageStore()
   private localLineageMemories: LineageMemory[]
   private oracleKeypair: Keypair
 
@@ -69,7 +85,6 @@ export class ParentAgent {
     this.failureTextByUri = new Map()
     this.failureHashByAgentId = new Map()
     this.failureUriByAgentId = new Map()
-    this.failureSummaryByAgentId = new Map()
     this.localLineageMemories = []
     this.oracleKeypair = loadOracleKeypair()
   }
@@ -139,7 +154,7 @@ export class ParentAgent {
 
     for (const [index, agent] of terminated.entries()) {
       const failureSummary =
-        this.failureSummaryByAgentId.get(agent.agentId) ?? (await this.buildFailureSummary(agent))
+        this.failureSummaries.get(agent.agentId) ?? (await this.buildFailureSummary(agent))
       const arweaveUri =
         this.failureUriByAgentId.get(agent.agentId) ??
         (await this.writeFailureToArweave(agent.agentId, failureSummary))
@@ -213,7 +228,6 @@ export class ParentAgent {
   }
 
   private async spawnAgents(n: number, lineageContext: string[][]): Promise<ChildAgent[]> {
-    const swarm = this.requireSwarmAddress()
     const generation = this.currentGeneration + 1
     const agents: ChildAgent[] = []
 
@@ -228,19 +242,9 @@ export class ParentAgent {
         wallet: this.loadOrCreatePersistedAgentWallet(this.agentCounter)
       })
 
-      const lineageHash = hashTo32Bytes(context.join('\n'))
-      const signature = await this.client.spawnAgent(
-        swarm,
-        child.agentId,
-        null,
-        child.generation,
-        child.taskType,
-        lineageHash
-      )
-
       console.log(
         chalk.blue(
-          `Spawned agent ${child.agentId} generation ${child.generation} (${signature})`
+          `Prepared agent ${child.agentId} generation ${child.generation}`
         )
       )
       agents.push(child)
@@ -249,41 +253,74 @@ export class ParentAgent {
     return agents
   }
 
+  private async spawnAgentOnChain(agent: ChildAgent, claim: SpawnAgentClaim): Promise<string> {
+    const swarm = this.requireSwarmAddress()
+    const lineageHash = hashTo32Bytes(agent.lineageContext.join('\n'))
+    return this.client.spawnAgent(
+      swarm,
+      agent.agentId,
+      null,
+      agent.generation,
+      agent.taskType,
+      lineageHash,
+      claim
+    )
+  }
+
   private async collectScores(agents: ChildAgent[]): Promise<void> {
     const swarm = this.requireSwarmAddress()
 
-    await Promise.all(
-      agents.map(async (agent) => {
-        try {
-          const output = await agent.executeTask()
-          const score = await agent.submitToOracle(output)
-          await this.client.submitScore(swarm, agent.agentId, score, this.oracleKeypair)
-          console.log(chalk.green(`Agent ${agent.agentId} scored ${score}/100`))
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          // InvalidAgentStatus means this agent was already scored/terminated (stale PDA from a prior run) — skip it
-          if (message.includes('InvalidAgentStatus') || message.includes('0x1771')) {
-            console.warn(chalk.yellow(`Agent ${agent.agentId} already scored on-chain (stale PDA), skipping submit`))
-            agent.stalePDA = true
-            return
-          }
-          agent.lastOutput = `Agent execution or scoring failed: ${message}`
-          agent.lastScore = 0
-          try {
-            await this.client.submitScore(swarm, agent.agentId, 0, this.oracleKeypair)
-          } catch (submitErr) {
-            const submitMsg = submitErr instanceof Error ? submitErr.message : String(submitErr)
-            if (submitMsg.includes('InvalidAgentStatus') || submitMsg.includes('0x1771')) {
-              console.warn(chalk.yellow(`Agent ${agent.agentId} fallback score also skipped (stale PDA)`))
-              agent.stalePDA = true
-              return
-            }
-            throw submitErr
-          }
-          console.error(chalk.red(`Agent ${agent.agentId} failed and received score 0: ${message}`))
+    for (const agent of agents) {
+      let spawnedOnChain = false
+      try {
+        const output = await agent.executeTask()
+        const spawnSignature = await this.spawnAgentOnChain(agent, claimFromAgentOutput(output))
+        spawnedOnChain = true
+        console.log(
+          chalk.blue(
+            `Spawned agent ${agent.agentId} generation ${agent.generation} (${spawnSignature})`
+          )
+        )
+
+        const score = await agent.submitToOracle(output)
+        await this.client.submitScore(swarm, agent.agentId, score, this.oracleKeypair)
+        console.log(chalk.green(`Agent ${agent.agentId} scored ${score}/100`))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        // InvalidAgentStatus means this agent was already scored/terminated (stale PDA from a prior run) — skip it
+        if (message.includes('InvalidAgentStatus') || message.includes('0x1771')) {
+          console.warn(chalk.yellow(`Agent ${agent.agentId} already scored on-chain (stale PDA), skipping submit`))
+          agent.stalePDA = true
+          continue
         }
-      })
-    )
+        agent.lastOutput = `Agent execution or scoring failed: ${message}`
+        agent.lastScore = 0
+        try {
+          if (!spawnedOnChain) {
+            const spawnSignature = await this.spawnAgentOnChain(
+              agent,
+              claimFromAgentOutput(agent.lastOutput)
+            )
+            spawnedOnChain = true
+            console.log(
+              chalk.blue(
+                `Spawned failed agent ${agent.agentId} for fallback score (${spawnSignature})`
+              )
+            )
+          }
+          await this.client.submitScore(swarm, agent.agentId, 0, this.oracleKeypair)
+        } catch (submitErr) {
+          const submitMsg = submitErr instanceof Error ? submitErr.message : String(submitErr)
+          if (submitMsg.includes('InvalidAgentStatus') || submitMsg.includes('0x1771')) {
+            console.warn(chalk.yellow(`Agent ${agent.agentId} fallback score also skipped (stale PDA)`))
+            agent.stalePDA = true
+            continue
+          }
+          throw submitErr
+        }
+        console.error(chalk.red(`Agent ${agent.agentId} failed and received score 0: ${message}`))
+      }
+    }
   }
 
   private async evaluateGeneration(
@@ -308,7 +345,8 @@ export class ParentAgent {
         const failureSummary = await this.buildFailureSummary(agent)
         const arweaveUri = await this.writeFailureToArweave(agent.agentId, failureSummary)
         const failureReasonHash = hashTo32Bytes(failureSummary)
-        this.failureSummaryByAgentId.set(agent.agentId, failureSummary)
+        this.failureSummaries.set(agent.agentId, failureSummary)
+        saveLineageStore(this.failureSummaries)
         this.failureUriByAgentId.set(agent.agentId, arweaveUri)
         this.failureHashByAgentId.set(agent.agentId, failureReasonHash)
         await this.client.evaluateAndPrune(swarm, agent.agentId, failureReasonHash, arweaveUri)
@@ -913,6 +951,45 @@ export class ParentAgent {
 
 function hashTo32Bytes(input: string): Buffer {
   return crypto.createHash('sha256').update(input).digest()
+}
+
+function claimFromAgentOutput(output: string): SpawnAgentClaim {
+  const parsed = parseJsonObject(output)
+  const protocol = String(
+    parsed.recommendedProtocol ??
+      parsed.bestProtocol ??
+      parsed.protocol ??
+      parsed.recommendedVault ??
+      'unknown'
+  )
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 32)
+
+  const rawApy = Number(parsed.expectedAPY ?? parsed.currentAPY ?? parsed.apy ?? NaN)
+  const normalizedApy = Number.isFinite(rawApy) ? (rawApy > 1 ? rawApy / 100 : rawApy) : 0
+  const claimedApyBps = Math.max(0, Math.min(10_000, Math.round(normalizedApy * 10_000)))
+
+  return {
+    claimedApyBps,
+    claimedProtocol: protocol || 'unknown',
+    taskOutputHash: hashTo32Bytes(output)
+  }
+}
+
+function parseJsonObject(text: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(text)
+    return asObject(parsed)
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/)
+    if (!match) return {}
+    try {
+      return asObject(JSON.parse(match[0]))
+    } catch {
+      return {}
+    }
+  }
 }
 
 function errorMessage(error: unknown): string {

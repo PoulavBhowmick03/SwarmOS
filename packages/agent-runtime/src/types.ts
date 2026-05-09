@@ -10,6 +10,9 @@ export interface AgentAccount {
   status: AgentStatus
   score: number
   lineageHash: Buffer
+  claimedApyBps: number
+  claimedProtocol: string
+  taskOutputHash: Buffer
   spawnTimestamp: number
   terminationTimestamp: number | null
 }

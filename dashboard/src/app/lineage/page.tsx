@@ -7,7 +7,7 @@ import { useAgents }  from '@/hooks/useAgents'
 import type { LineageMemoryAccount } from '@/lib/client'
 
 const SWARM_ADDRESS =
-  process.env.NEXT_PUBLIC_SWARM_ADDRESS ?? '9o3g8JLAFcjaNnp5d6VHC1kM6DZCQRaVM7uuui4yBPrm'
+  process.env.NEXT_PUBLIC_SWARM_ADDRESS ?? '6zbt4nwzetSShWEQi6AnrVwjRqLxANF9acYpPu4hQWVF'
 
 const PROTOCOLS = ['Kamino SOL/USDC', 'JupiterLend USDC', 'Save Protocol', 'Drift USDC', 'Marginfi SOL']
 const REAL_APYS = [9.26, 4.40, 5.12, 3.87, 7.84]

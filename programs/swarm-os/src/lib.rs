@@ -18,6 +18,7 @@ pub struct AgentSpawned {
     pub agent_id: u64,
     pub generation: u64,
     pub swarm: Pubkey,
+    pub claimed_apy_bps: u16,
 }
 
 #[event]
@@ -70,13 +71,8 @@ pub mod swarm_os {
         )
     }
 
-    pub fn spawn_agent(
-        ctx: Context<SpawnAgent>,
-        agent_id: u64,
-        parent_id: Option<u64>,
-        lineage_hash: [u8; 32],
-    ) -> Result<()> {
-        instructions::spawn_agent::handler(ctx, agent_id, parent_id, lineage_hash)
+    pub fn spawn_agent(ctx: Context<SpawnAgent>, args: SpawnAgentArgs) -> Result<()> {
+        instructions::spawn_agent::handler(ctx, args)
     }
 
     pub fn submit_score(ctx: Context<SubmitScore>, agent_id: u64, score: u8) -> Result<()> {

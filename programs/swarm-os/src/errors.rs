@@ -18,4 +18,6 @@ pub enum SwarmError {
     UriTooLong,
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
+    #[msg("Oracle score is suspicious for the agent's claimed APY")]
+    SuspiciousScore,
 }

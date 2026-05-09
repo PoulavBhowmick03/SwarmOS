@@ -189,7 +189,8 @@ LIFI_API_KEY=  # optional for widget
 SCORING_ORACLE_URL=https://your-oracle.railway.app
 
 # Program IDs (fill after deploy)
-SWARM_PROGRAM_ID=
+SWARM_PROGRAM_ID=D9moMaWzJw3LVxnZkiXS7xrTUHmF4n3hJeDWCvbB7B1a
+NEXT_PUBLIC_SWARM_ADDRESS=6zbt4nwzetSShWEQi6AnrVwjRqLxANF9acYpPu4hQWVF
 ```
 
 ---
