@@ -1,0 +1,892 @@
+{
+  "address": "D9moMaWzJw3LVxnZkiXS7xrTUHmF4n3hJeDWCvbB7B1a",
+  "metadata": {
+    "name": "swarm_os",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "SwarmOS — Darwinian AI agent swarm protocol on Solana"
+  },
+  "instructions": [
+    {
+      "name": "bump_generation",
+      "discriminator": [
+        232,
+        110,
+        55,
+        49,
+        45,
+        111,
+        171,
+        135
+      ],
+      "accounts": [
+        {
+          "name": "swarm",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "evaluate_and_prune",
+      "discriminator": [
+        104,
+        88,
+        202,
+        21,
+        200,
+        197,
+        116,
+        225
+      ],
+      "accounts": [
+        {
+          "name": "agent",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "swarm"
+              },
+              {
+                "kind": "arg",
+                "path": "agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lineage_memory",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  110,
+                  101,
+                  97,
+                  103,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "swarm"
+              },
+              {
+                "kind": "arg",
+                "path": "agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "swarm",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "agent_id",
+          "type": "u64"
+        },
+        {
+          "name": "failure_reason_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "arweave_uri",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "initialize_swarm",
+      "discriminator": [
+        151,
+        209,
+        27,
+        60,
+        187,
+        103,
+        78,
+        240
+      ],
+      "accounts": [
+        {
+          "name": "swarm",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  119,
+                  97,
+                  114,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "treasury"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "scoring_threshold",
+          "type": "u8"
+        },
+        {
+          "name": "scoring_oracle",
+          "type": "pubkey"
+        },
+        {
+          "name": "task_type",
+          "type": {
+            "defined": {
+              "name": "TaskType"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "respawn_successor",
+      "discriminator": [
+        153,
+        5,
+        13,
+        12,
+        51,
+        104,
+        86,
+        86
+      ],
+      "accounts": [
+        {
+          "name": "new_agent",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "swarm"
+              },
+              {
+                "kind": "arg",
+                "path": "new_agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "parent_lineage",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  110,
+                  101,
+                  97,
+                  103,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "swarm"
+              },
+              {
+                "kind": "arg",
+                "path": "parent_agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "swarm",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "new_agent_id",
+          "type": "u64"
+        },
+        {
+          "name": "parent_agent_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "spawn_agent",
+      "discriminator": [
+        136,
+        78,
+        1,
+        135,
+        18,
+        249,
+        211,
+        158
+      ],
+      "accounts": [
+        {
+          "name": "agent",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "swarm"
+              },
+              {
+                "kind": "arg",
+                "path": "agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "swarm",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "agent_id",
+          "type": "u64"
+        },
+        {
+          "name": "parent_id",
+          "type": {
+            "option": "u64"
+          }
+        },
+        {
+          "name": "lineage_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "submit_score",
+      "discriminator": [
+        212,
+        128,
+        45,
+        22,
+        112,
+        82,
+        85,
+        235
+      ],
+      "accounts": [
+        {
+          "name": "agent",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "swarm"
+              },
+              {
+                "kind": "arg",
+                "path": "agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "swarm"
+        },
+        {
+          "name": "oracle",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "agent_id",
+          "type": "u64"
+        },
+        {
+          "name": "score",
+          "type": "u8"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Agent",
+      "discriminator": [
+        47,
+        166,
+        112,
+        147,
+        155,
+        197,
+        86,
+        7
+      ]
+    },
+    {
+      "name": "LineageMemory",
+      "discriminator": [
+        27,
+        42,
+        154,
+        248,
+        7,
+        100,
+        124,
+        213
+      ]
+    },
+    {
+      "name": "Swarm",
+      "discriminator": [
+        227,
+        225,
+        227,
+        85,
+        212,
+        74,
+        247,
+        107
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AgentRespawned",
+      "discriminator": [
+        72,
+        19,
+        25,
+        231,
+        19,
+        89,
+        184,
+        149
+      ]
+    },
+    {
+      "name": "AgentScored",
+      "discriminator": [
+        67,
+        24,
+        201,
+        174,
+        83,
+        120,
+        137,
+        129
+      ]
+    },
+    {
+      "name": "AgentSpawned",
+      "discriminator": [
+        229,
+        125,
+        60,
+        41,
+        61,
+        109,
+        254,
+        34
+      ]
+    },
+    {
+      "name": "AgentSurvived",
+      "discriminator": [
+        37,
+        7,
+        182,
+        58,
+        73,
+        130,
+        174,
+        162
+      ]
+    },
+    {
+      "name": "AgentTerminated",
+      "discriminator": [
+        163,
+        94,
+        215,
+        41,
+        75,
+        181,
+        32,
+        86
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Caller is not the swarm authority"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidAgentStatus",
+      "msg": "Agent status is invalid for this operation"
+    },
+    {
+      "code": 6002,
+      "name": "SwarmMismatch",
+      "msg": "Agent does not belong to this swarm"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidScore",
+      "msg": "Score must be between 0 and 100"
+    },
+    {
+      "code": 6004,
+      "name": "AgentIdMismatch",
+      "msg": "Agent ID does not match the requested PDA seed"
+    },
+    {
+      "code": 6005,
+      "name": "NameTooLong",
+      "msg": "Name exceeds 32-character maximum"
+    },
+    {
+      "code": 6006,
+      "name": "UriTooLong",
+      "msg": "Arweave URI exceeds 100-character maximum"
+    },
+    {
+      "code": 6007,
+      "name": "ArithmeticOverflow",
+      "msg": "Arithmetic overflow"
+    }
+  ],
+  "types": [
+    {
+      "name": "Agent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": "u64"
+          },
+          {
+            "name": "swarm",
+            "type": "pubkey"
+          },
+          {
+            "name": "parent_id",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "generation",
+            "type": "u64"
+          },
+          {
+            "name": "task_type",
+            "type": {
+              "defined": {
+                "name": "TaskType"
+              }
+            }
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "AgentStatus"
+              }
+            }
+          },
+          {
+            "name": "score",
+            "type": "u8"
+          },
+          {
+            "name": "lineage_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "spawn_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "termination_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentRespawned",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "new_agent_id",
+            "type": "u64"
+          },
+          {
+            "name": "parent_agent_id",
+            "type": "u64"
+          },
+          {
+            "name": "lineage_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentScored",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": "u64"
+          },
+          {
+            "name": "score",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentSpawned",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": "u64"
+          },
+          {
+            "name": "generation",
+            "type": "u64"
+          },
+          {
+            "name": "swarm",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Scored"
+          },
+          {
+            "name": "Survived"
+          },
+          {
+            "name": "Terminated"
+          },
+          {
+            "name": "Respawned"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentSurvived",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": "u64"
+          },
+          {
+            "name": "score",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentTerminated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": "u64"
+          },
+          {
+            "name": "score",
+            "type": "u8"
+          },
+          {
+            "name": "generation",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LineageMemory",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": "u64"
+          },
+          {
+            "name": "swarm",
+            "type": "pubkey"
+          },
+          {
+            "name": "generation",
+            "type": "u64"
+          },
+          {
+            "name": "task_type",
+            "type": {
+              "defined": {
+                "name": "TaskType"
+              }
+            }
+          },
+          {
+            "name": "failure_score",
+            "type": "u8"
+          },
+          {
+            "name": "failure_reason_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "arweave_uri",
+            "type": "string"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Swarm",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "scoring_oracle",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "generation",
+            "type": "u64"
+          },
+          {
+            "name": "active_agent_count",
+            "type": "u32"
+          },
+          {
+            "name": "total_spawned",
+            "type": "u64"
+          },
+          {
+            "name": "scoring_threshold",
+            "type": "u8"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "task_type",
+            "type": {
+              "defined": {
+                "name": "TaskType"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TaskType",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "YieldOptimizer"
+          },
+          {
+            "name": "CodeReviewer"
+          },
+          {
+            "name": "DataSynthesizer"
+          }
+        ]
+      }
+    }
+  ]
+}
