@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "byreal-cli": {
+      "source": "byreal-git/byreal-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/byreal-cli/SKILL.md",
+      "computedHash": "dbb4627043f76b8c40536225b73989175ee1440c4982cc9970b577c7655bcfd0"
+    }
+  }
+}
