@@ -2,42 +2,28 @@
 
 import type { AgentNode } from '@/hooks/useAgents'
 import type { AgentEventData } from '@/hooks/useEvents'
+import type { YieldLike } from '@/lib/yields'
+import { actualApyForProtocol, apyDelta, formatPercent, formatUsdc, shortHash } from '@/lib/yields'
+import { explorerAddressUrl } from '@/lib/config'
 
-/* ─── APY inference ──────────────────────────────────── */
-const PROTOCOLS = ['Kamino SOL/USDC', 'JupiterLend USDC', 'Save Protocol', 'Drift USDC', 'Marginfi SOL']
-const REAL_APYS = [9.26, 4.40, 5.12, 3.87, 7.84]
-const TVL_MAP   = ['$45.2M', '$28.1M', '$62.4M', '$19.8M', '$38.6M']
-
-function inferAPY(agentId: number, score: number): {
-  protocol: string
-  claimed: number | null
-  real: number
-  delta: number | null
-  tvl: string
-} {
-  const idx      = agentId % 5
-  const real     = REAL_APYS[idx]
-  const protocol = PROTOCOLS[idx]
-  const tvl      = TVL_MAP[idx]
-  if (score === 0) return { protocol, claimed: null, real, delta: null, tvl }
-  const err     = ((100 - score) / 100) * real * 2.5
-  const claimed = Math.round((real + err) * 100) / 100
-  const delta   = Math.round((claimed - real) * 100) / 100
-  return { protocol, claimed, real, delta, tvl }
-}
-
-function buildReasoning(agentId: number, score: number): string {
-  const { protocol, claimed, real, tvl } = inferAPY(agentId, score)
+function buildReasoning(protocol: string, claimed: number | null, actual: number | null, score: number): string {
   if (score === 0) {
-    return 'Agent was eliminated before scoring completed. No yield recommendation could be verified against live oracle data.'
+    return 'Agent has not received an oracle score yet. The claim and output hash are already stored on-chain.'
   }
+  if (claimed == null) {
+    return 'Oracle score exists, but this account does not expose a stored APY claim. Check the program IDL and deployment version.'
+  }
+  if (actual == null) {
+    return `The agent claimed ${protocol} at ${formatPercent(claimed)}. Live oracle data does not currently expose a direct matching yield row.`
+  }
+  const delta = apyDelta(claimed, actual) ?? 0
   if (score >= 80) {
-    return `Selected ${protocol} based on consistently high APY of ${real}%. TVL of ${tvl} indicates strong protocol health. Recommendation was accurate within oracle threshold.`
+    return `The agent claimed ${protocol} at ${formatPercent(claimed)}. Live oracle APY is ${formatPercent(actual)}, a ${Math.abs(delta).toFixed(2)} point delta.`
   }
   if (score >= 40) {
-    return `Identified ${protocol} as highest opportunity at ${claimed ?? real}%. Real rate was ${real}%. Minor discrepancy attributed to APY volatility during evaluation window.`
+    return `The agent found ${protocol}, but its stored claim of ${formatPercent(claimed)} only partially matched the live rate of ${formatPercent(actual)}.`
   }
-  return `Claimed ${protocol} yielded ${claimed ?? '?'}% APY. Oracle verification found actual rate at ${real}%. Significant overestimation suggests reliance on stale or incorrect data sources.`
+  return `The agent claimed ${protocol} at ${formatPercent(claimed)} while live oracle data showed ${formatPercent(actual)}. The mismatch was large enough to fail selection.`
 }
 
 /* ─── Status pill ────────────────────────────────────── */
@@ -96,7 +82,15 @@ function Row({ label, value, color = '#888' }: { label: string; value: string; c
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
       <span style={{ fontSize: 10, color: '#5a5a78', letterSpacing: '0.12em', textTransform: 'uppercase' }}>{label}</span>
-      <span style={{ fontSize: 12, color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{value}</span>
+      <span style={{
+        fontSize: 12,
+        color,
+        fontVariantNumeric: 'tabular-nums',
+        fontWeight: 600,
+        textAlign: 'right',
+        marginLeft: 12,
+        wordBreak: 'break-all',
+      }}>{value}</span>
     </div>
   )
 }
@@ -105,25 +99,35 @@ function Row({ label, value, color = '#888' }: { label: string; value: string; c
 interface Props {
   agent: AgentNode | null
   eventData?: AgentEventData
+  yields?: YieldLike[]
   onClose: () => void
 }
 
 /* ─── AgentDetailPanel ───────────────────────────────── */
-export function AgentDetailPanel({ agent, eventData, onClose }: Props) {
+export function AgentDetailPanel({ agent, eventData, yields = [], onClose }: Props) {
   if (!agent) return null
 
   const score     = agent.score
   const agentId   = agent.agent_id
-  const apy       = inferAPY(agentId, score)
-  const claimed   = eventData?.claimedAPY ?? apy.claimed
-  const actual    = eventData?.actualAPY ?? apy.real
-  const protocol  = eventData?.protocol ?? apy.protocol
-  const reasoning = buildReasoning(agentId, score)
-  const delta     = claimed != null ? Math.round((claimed - actual) * 100) / 100 : null
+  const claimed   = eventData?.claimedAPY ?? agent.claimed_apy
+  const protocol  = eventData?.protocol ?? agent.claimed_protocol ?? 'Unknown protocol'
+  const actual    = eventData?.actualAPY ?? actualApyForProtocol(yields, protocol)
+  const reasoning = buildReasoning(protocol, claimed, actual, score)
+  const delta     = apyDelta(claimed, actual)
   const deltaPos  = delta != null && delta > 0
+  const usdcBalance = eventData?.agentUsdcBalance ?? agent.agent_usdc_balance
+  const ata = eventData?.agentUsdcAta ?? agent.agent_usdc_ata
+  const custodyState = usdcBalance == null
+    ? 'ATA not found'
+    : usdcBalance > 0
+      ? 'Funded'
+      : agent.status === 'Terminated'
+        ? 'Reclaimed'
+        : 'Empty'
 
   // Solana explorer link (devnet)
-  const explorerUrl = `https://explorer.solana.com/address/${agent.id}?cluster=devnet`
+  const explorerUrl = explorerAddressUrl(agent.id)
+  const ataExplorerUrl = explorerAddressUrl(ata)
 
   return (
     <>
@@ -199,28 +203,34 @@ export function AgentDetailPanel({ agent, eventData, onClose }: Props) {
 
           {/* RECOMMENDATION */}
           <Section title="RECOMMENDATION">
-            <Row label="Protocol" value={protocol} color="#F0F0F0"/>
-            {claimed != null && (
-              <Row label="Claimed APY" value={`${claimed}%`} color="#F5A623"/>
-            )}
-            {claimed == null && (
-              <Row label="Claimed APY" value="—" color="#444"/>
-            )}
+            <Row label="Protocol" value={protocol || '-'} color="#F0F0F0"/>
+            <Row label="Claimed APY" value={formatPercent(claimed)} color="#F5A623"/>
+            <Row label="Claim BPS" value={String(eventData?.claimedApyBps ?? agent.claimed_apy_bps)} color="#606080"/>
+            <Row label="Output Hash" value={shortHash(agent.task_output_hash)} color="#38BDF8"/>
           </Section>
 
           <div style={{ height: 1, background: '#1e1e2c', marginBottom: 16 }}/>
 
           {/* ACCURACY CHECK */}
           <Section title="ACCURACY CHECK">
-            <Row label="Claimed" value={claimed != null ? `${claimed}%` : '—'} color="#F5A623"/>
-            <Row label="Real"    value={`${actual}%`}                        color="#14F195"/>
+            <Row label="Claimed" value={formatPercent(claimed)} color="#F5A623"/>
+            <Row label="Live Oracle" value={formatPercent(actual)} color={actual == null ? '#444' : '#14F195'}/>
             {delta != null && (
               <Row
                 label="Delta"
-                value={`${deltaPos ? '+' : ''}${delta}%`}
+                value={`${deltaPos ? '+' : ''}${delta.toFixed(2)}%`}
                 color={deltaPos ? '#FF3B3B' : '#14F195'}
               />
             )}
+          </Section>
+
+          <div style={{ height: 1, background: '#1e1e2c', marginBottom: 16 }}/>
+
+          {/* CUSTODY */}
+          <Section title="USDC CUSTODY">
+            <Row label="Agent ATA" value={shortHash(ata)} color="#38BDF8"/>
+            <Row label="Balance" value={formatUsdc(usdcBalance)} color={usdcBalance && usdcBalance > 0 ? '#14F195' : '#606080'}/>
+            <Row label="State" value={custodyState} color={custodyState === 'Funded' ? '#14F195' : custodyState === 'Reclaimed' ? '#F5A623' : '#606080'}/>
           </Section>
 
           <div style={{ height: 1, background: '#1e1e2c', marginBottom: 16 }}/>
@@ -271,6 +281,19 @@ export function AgentDetailPanel({ agent, eventData, onClose }: Props) {
             <div style={{ marginTop: 6, fontSize: 10, color: '#505068', fontVariantNumeric: 'tabular-nums', wordBreak: 'break-all' }}>
               {agent.id.slice(0, 20)}…{agent.id.slice(-8)}
             </div>
+            <a
+              href={ataExplorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                marginTop: 10,
+                fontSize: 11, color: '#38BDF8',
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              <span>View agent USDC ATA</span>
+              <span style={{ fontSize: 10 }}>↗</span>
+            </a>
           </Section>
 
         </div>

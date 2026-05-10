@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo } from 'react'
 import type { AgentNode } from '@/hooks/useAgents'
+import { formatPercent, formatUsdc } from '@/lib/yields'
 
 interface Props {
   agents: AgentNode[]
@@ -87,7 +88,7 @@ function MiniNode({ agent, onNodeClick }: { agent: AgentNode; onNodeClick?: (a: 
   const terminated = agent.status === 'Terminated'
   return (
     <div
-      title={`#${agent.agent_id} · ${agent.status} · ${agent.score > 0 ? agent.score + '/100' : 'unscored'}`}
+      title={`#${agent.agent_id} · ${agent.status} · ${agent.claimed_protocol || 'no claim'} ${formatPercent(agent.claimed_apy)} · ${agent.score > 0 ? agent.score + '/100' : 'unscored'}`}
       onClick={() => onNodeClick?.(agent)}
       style={{
         width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
@@ -522,7 +523,7 @@ export function SwarmVisualizer({ agents, swarmAddress, onNodeClick }: Props) {
         {hover && (() => {
           const a    = hover.agent
           const left = Math.min(Math.max(hover.x - 90, 8), size.w - 192)
-          const top  = Math.max(8, hover.y - 96)
+          const top  = Math.max(8, hover.y - 126)
           return (
             <div style={{
               position: 'absolute', left, top, width: 182,
@@ -545,8 +546,12 @@ export function SwarmVisualizer({ agents, swarmAddress, onNodeClick }: Props) {
                 color: '#9945FF', overflow: 'hidden',
                 textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2,
               }}>
-                {a.task_type}
+                {a.claimed_protocol || a.task_type}
               </div>
+              <div>Claim: <span style={{ color: '#F5A623' }}>{formatPercent(a.claimed_apy)}</span></div>
+              <div>USDC: <span style={{ color: a.agent_usdc_balance && a.agent_usdc_balance > 0 ? '#14F195' : '#606080' }}>
+                {formatUsdc(a.agent_usdc_balance)}
+              </span></div>
               {onNodeClick && (
                 <div style={{ marginTop: 4, fontSize: 9, color: '#505068', letterSpacing: '0.12em' }}>
                   CLICK TO INSPECT

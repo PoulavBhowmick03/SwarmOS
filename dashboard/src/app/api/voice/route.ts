@@ -30,26 +30,36 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'text and voiceId are required' }, { status: 400 })
   }
 
-  const elevenRes = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${voiceId}`, {
-    method: 'POST',
-    headers: {
-      'xi-api-key': apiKey,
-      'Content-Type': 'application/json',
-      Accept: 'audio/mpeg',
-    },
-    body: JSON.stringify({
-      text,
-      model_id,
-      voice_settings: voice_settings ?? { stability: 0.5, similarity_boost: 0.75 },
-    }),
-  })
+  let elevenRes: Response
+  try {
+    elevenRes = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${voiceId}`, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg',
+      },
+      body: JSON.stringify({
+        text,
+        model_id,
+        voice_settings: voice_settings ?? { stability: 0.5, similarity_boost: 0.75 },
+      }),
+      signal: AbortSignal.timeout(10_000),
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: `ElevenLabs unreachable: ${msg}` }, { status: 502 })
+  }
 
   if (!elevenRes.ok) {
     const errText = await elevenRes.text().catch(() => '')
-    return NextResponse.json(
+    const retryAfter = elevenRes.headers.get('Retry-After')
+    const res = NextResponse.json(
       { error: `ElevenLabs error ${elevenRes.status}: ${errText}` },
       { status: elevenRes.status }
     )
+    if (retryAfter) res.headers.set('Retry-After', retryAfter)
+    return res
   }
 
   const audioBuffer = await elevenRes.arrayBuffer()

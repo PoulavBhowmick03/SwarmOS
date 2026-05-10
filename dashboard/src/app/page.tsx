@@ -10,32 +10,21 @@ import { useSwarm }           from '@/hooks/useSwarm'
 import { useAgents }          from '@/hooks/useAgents'
 import { useEvents }          from '@/hooks/useEvents'
 import { useLineage }         from '@/hooks/useLineage'
+import { useYields }          from '@/hooks/useYields'
 import type { AgentNode }     from '@/hooks/useAgents'
 import type { SwarmEvent }    from '@/lib/client'
 import { LiveYields }         from '@/components/LiveYields'
-
-const SWARM_ADDRESS =
-  process.env.NEXT_PUBLIC_SWARM_ADDRESS ??
-  '6zbt4nwzetSShWEQi6AnrVwjRqLxANF9acYpPu4hQWVF'
-
-const PROTOCOLS = ['Kamino SOL/USDC', 'JupiterLend USDC', 'Save Protocol', 'Drift USDC', 'Marginfi SOL']
-const REAL_APYS = [9.26, 4.40, 5.12, 3.87, 7.84]
-
-function agentClaimedAPY(agentId: number, score: number): number | null {
-  if (score === 0) return null
-  const realAPY = REAL_APYS[agentId % 5]
-  const err     = ((100 - score) / 100) * realAPY * 2.5
-  return Math.round((realAPY + err) * 100) / 100
-}
+import { actualApyForProtocol } from '@/lib/yields'
+import { SWARM_ADDRESS }      from '@/lib/config'
 
 /* Build a synthetic event feed from agent state for initial load */
-function deriveEvents(agents: AgentNode[]): SwarmEvent[] {
+function deriveEvents(agents: AgentNode[], yields: ReturnType<typeof useYields>['yields']): SwarmEvent[] {
   const evts: SwarmEvent[] = []
   for (const a of agents) {
     const eventTime = a.spawn_timestamp > 0 ? a.spawn_timestamp * 1000 : Date.now() - 60_000
-    const protocol = PROTOCOLS[a.agent_id % 5]
-    const actual   = REAL_APYS[a.agent_id % 5]
-    const claimed  = agentClaimedAPY(a.agent_id, a.score)
+    const protocol = a.claimed_protocol || 'Unknown protocol'
+    const actual   = actualApyForProtocol(yields, protocol)
+    const claimed  = a.claimed_apy
     const inh      = a.parent_id != null ? (a.agent_id % 4) + 1 : 0
 
     evts.push({
@@ -44,7 +33,12 @@ function deriveEvents(agents: AgentNode[]): SwarmEvent[] {
       generation:        a.generation,
       timestamp:         eventTime,
       protocol,
-      actualAPY:         actual,
+      actualAPY:         actual ?? undefined,
+      claimedApyBps:     a.claimed_apy_bps,
+      claimedAPY:        claimed,
+      taskOutputHash:    a.task_output_hash,
+      agentUsdcAta:      a.agent_usdc_ata,
+      agentUsdcBalance:  a.agent_usdc_balance,
       inheritedMemories: inh,
     })
 
@@ -56,8 +50,12 @@ function deriveEvents(agents: AgentNode[]): SwarmEvent[] {
         score:      a.score,
         timestamp:  eventTime + 5_000,
         protocol,
-        actualAPY:  actual,
-        claimedAPY: claimed ?? undefined,
+        actualAPY:  actual ?? undefined,
+        claimedApyBps: a.claimed_apy_bps,
+        claimedAPY: claimed,
+        taskOutputHash: a.task_output_hash,
+        agentUsdcAta: a.agent_usdc_ata,
+        agentUsdcBalance: a.agent_usdc_balance,
       })
     }
     if (a.status === 'Survived') {
@@ -68,8 +66,12 @@ function deriveEvents(agents: AgentNode[]): SwarmEvent[] {
         score:      a.score,
         timestamp:  eventTime + 8_000,
         protocol,
-        actualAPY:  actual,
-        claimedAPY: claimed ?? undefined,
+        actualAPY:  actual ?? undefined,
+        claimedApyBps: a.claimed_apy_bps,
+        claimedAPY: claimed,
+        taskOutputHash: a.task_output_hash,
+        agentUsdcAta: a.agent_usdc_ata,
+        agentUsdcBalance: a.agent_usdc_balance,
       })
     }
     if (a.status === 'Terminated') {
@@ -80,8 +82,12 @@ function deriveEvents(agents: AgentNode[]): SwarmEvent[] {
         score:      a.score,
         timestamp:  eventTime + 8_000,
         protocol,
-        actualAPY:  actual,
-        claimedAPY: claimed ?? undefined,
+        actualAPY:  actual ?? undefined,
+        claimedApyBps: a.claimed_apy_bps,
+        claimedAPY: claimed,
+        taskOutputHash: a.task_output_hash,
+        agentUsdcAta: a.agent_usdc_ata,
+        agentUsdcBalance: a.agent_usdc_balance,
       })
     }
     if (a.status === 'Respawned') {
@@ -92,7 +98,12 @@ function deriveEvents(agents: AgentNode[]): SwarmEvent[] {
         generation:        a.generation,
         timestamp:         eventTime + 2_000,
         protocol,
-        actualAPY:         actual,
+        actualAPY:         actual ?? undefined,
+        claimedApyBps:     a.claimed_apy_bps,
+        claimedAPY:        claimed,
+        taskOutputHash:    a.task_output_hash,
+        agentUsdcAta:      a.agent_usdc_ata,
+        agentUsdcBalance:  a.agent_usdc_balance,
         inheritedMemories: inh,
       })
     }
@@ -105,11 +116,12 @@ export default function SwarmDashboard() {
   const { agents,   isLoading: agentsLoading }  = useAgents(SWARM_ADDRESS)
   const { events: liveEvents, byAgent }         = useEvents(SWARM_ADDRESS)
   const { memories, isLoading: lineageLoading } = useLineage(SWARM_ADDRESS)
+  const { yields }                              = useYields()
 
   const [selectedAgent, setSelectedAgent] = useState<AgentNode | null>(null)
 
   // Fall back to derived events when real-time subscription has nothing yet
-  const derivedEvents  = useMemo(() => deriveEvents(agents), [agents])
+  const derivedEvents  = useMemo(() => deriveEvents(agents, yields), [agents, yields])
   const events         = liveEvents.length > 0 ? liveEvents : derivedEvents
 
   // Stats
@@ -125,7 +137,7 @@ export default function SwarmDashboard() {
 
   const survivedAgents = agents.filter((a) => a.status === 'Survived')
   const bestAPY        = survivedAgents.length > 0
-    ? Math.max(...survivedAgents.map((a) => REAL_APYS[a.agent_id % 5])).toFixed(2) + '%'
+    ? Math.max(...survivedAgents.map((a) => a.claimed_apy)).toFixed(2) + '%'
     : undefined
 
   // Suppress unused warning — agentsLoading still blocks initial state
@@ -172,7 +184,7 @@ export default function SwarmDashboard() {
             <AgentFeed events={events}/>
           </div>
           <div style={{ flex: '1 1 50%', minHeight: 0 }}>
-            <LineagePanel memories={memories} isLoading={lineageLoading}/>
+            <LineagePanel memories={memories} agents={agents} yields={yields} isLoading={lineageLoading}/>
           </div>
         </div>
       </main>
@@ -182,6 +194,7 @@ export default function SwarmDashboard() {
         <AgentDetailPanel
           agent={selectedAgent}
           eventData={byAgent.get(selectedAgent.agent_id)}
+          yields={yields}
           onClose={() => setSelectedAgent(null)}
         />
       )}

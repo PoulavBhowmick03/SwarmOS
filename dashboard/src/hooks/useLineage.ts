@@ -15,8 +15,6 @@ export function useLineage(swarmAddress: string): {
 
   useEffect(() => {
     cancelRef.current = false
-    let intervalId: ReturnType<typeof setInterval>
-
     const load = async () => {
       try {
         const { getClient } = await import('@/lib/client')
@@ -35,7 +33,7 @@ export function useLineage(swarmAddress: string): {
     }
 
     void load()
-    intervalId = setInterval(load, 60_000)
+    const intervalId = setInterval(load, 60_000)
 
     return () => {
       cancelRef.current = true

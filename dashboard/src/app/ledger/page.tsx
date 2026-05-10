@@ -4,9 +4,8 @@ import Link from 'next/link'
 import { useMemo } from 'react'
 import { useAgents, AgentNode } from '@/hooks/useAgents'
 import { useSwarm }             from '@/hooks/useSwarm'
-
-const SWARM_ADDRESS =
-  process.env.NEXT_PUBLIC_SWARM_ADDRESS ?? '6zbt4nwzetSShWEQi6AnrVwjRqLxANF9acYpPu4hQWVF'
+import { formatPercent, formatUsdc, shortHash } from '@/lib/yields'
+import { SWARM_ADDRESS } from '@/lib/config'
 
 type Instruction =
   | 'spawn_agent'
@@ -28,13 +27,17 @@ function deriveLedger(agents: AgentNode[]): LedgerEntry[] {
   const entries: LedgerEntry[] = []
 
   for (const a of agents) {
+    const claim = a.claimed_protocol
+      ? `${a.claimed_protocol} ${formatPercent(a.claimed_apy)}`
+      : 'claim unavailable'
+
     entries.push({
       ts:          a.spawn_timestamp,
       instruction: 'spawn_agent',
       agentId:     a.agent_id,
       generation:  a.generation,
       score:       null,
-      detail:      a.parent_id != null ? `successor of #${a.parent_id}` : 'genesis agent',
+      detail:      `${a.parent_id != null ? `successor of #${a.parent_id}` : 'genesis agent'}; ${claim}; funded agent ATA ${shortHash(a.agent_usdc_ata, 6, 4)}`,
     })
 
     if (a.score > 0 || a.status === 'Scored' || a.status === 'Survived' || a.status === 'Terminated') {
@@ -44,7 +47,7 @@ function deriveLedger(agents: AgentNode[]): LedgerEntry[] {
         agentId:     a.agent_id,
         generation:  a.generation,
         score:       a.score,
-        detail:      `oracle: ${a.score}/100`,
+        detail:      `oracle: ${a.score}/100; output ${shortHash(a.task_output_hash, 6, 4)}`,
       })
     }
 
@@ -55,7 +58,7 @@ function deriveLedger(agents: AgentNode[]): LedgerEntry[] {
         agentId:     a.agent_id,
         generation:  a.generation,
         score:       a.score,
-        detail:      'cleared threshold',
+        detail:      `cleared threshold; agent balance ${formatUsdc(a.agent_usdc_balance)}`,
       })
     } else if (a.status === 'Terminated') {
       entries.push({
@@ -64,7 +67,7 @@ function deriveLedger(agents: AgentNode[]): LedgerEntry[] {
         agentId:     a.agent_id,
         generation:  a.generation,
         score:       a.score,
-        detail:      'lineage memory written',
+        detail:      'lineage memory written; agent USDC reclaimed to treasury',
       })
     } else if (a.status === 'Respawned') {
       entries.push({

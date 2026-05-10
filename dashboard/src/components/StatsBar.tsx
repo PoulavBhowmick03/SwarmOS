@@ -74,13 +74,11 @@ function PulseDot({ active }: { active: boolean }) {
 }
 
 function LocalClock() {
-  const [now, setNow] = useState<Date | null>(null)
+  const [now, setNow] = useState<Date>(() => new Date())
   useEffect(() => {
-    setNow(new Date())
     const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
-  if (!now) return null
   const pad = (n: number) => String(n).padStart(2, '0')
   const s = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
             `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`

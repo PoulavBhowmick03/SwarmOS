@@ -4,13 +4,14 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useSwarm }  from '@/hooks/useSwarm'
 import { useAgents } from '@/hooks/useAgents'
-
-const SWARM_ADDRESS =
-  process.env.NEXT_PUBLIC_SWARM_ADDRESS ?? '6zbt4nwzetSShWEQi6AnrVwjRqLxANF9acYpPu4hQWVF'
-
-const PROGRAM_ID  = process.env.NEXT_PUBLIC_SWARM_PROGRAM_ID ?? 'D9moMaWzJw3LVxnZkiXS7xrTUHmF4n3hJeDWCvbB7B1a'
-const RPC_URL     = process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com'
-const ORACLE_URL  = process.env.NEXT_PUBLIC_SCORING_ORACLE_URL ?? 'http://localhost:3001'
+import { formatUsdc, shortHash } from '@/lib/yields'
+import {
+  ORACLE_URL,
+  SOLANA_RPC_URL as RPC_URL,
+  SWARM_ADDRESS,
+  SWARM_PROGRAM_ID as PROGRAM_ID,
+  explorerAddressUrl,
+} from '@/lib/config'
 
 function PageNav() {
   return (
@@ -27,7 +28,11 @@ function PageNav() {
       <span style={{ color: '#1e1e2c', fontSize: 13 }}>|</span>
       <span style={{ fontSize: 12, color: '#F0F0F0', letterSpacing: '0.12em', fontWeight: 600 }}>NETWORK</span>
       <span style={{ color: '#1e1e2c', fontSize: 13 }}>|</span>
-      {[{href: '/lineage', label: 'Lineage'}].map(({href, label}) => (
+      {[
+        {href: '/demo', label: 'Demo'},
+        {href: '/ledger', label: 'Ledger'},
+        {href: '/lineage', label: 'Lineage'},
+      ].map(({href, label}) => (
         <Link key={href} href={href} style={{ fontSize: 11, color: '#5a5a78', textDecoration: 'none', letterSpacing: '0.06em' }}
           onMouseEnter={(e) => (e.currentTarget.style.color = '#9945FF')}
           onMouseLeave={(e) => (e.currentTarget.style.color = '#5a5a78')}
@@ -144,11 +149,18 @@ export default function NetworkPage() {
           <SectionHeader title="DEPLOYMENT"/>
           <InfoRow label="Network"    value="Solana Devnet" mono={false} color="#9945FF"/>
           <InfoRow label="Program ID" value={PROGRAM_ID}
-            href={`https://explorer.solana.com/address/${PROGRAM_ID}?cluster=devnet`}
+            href={explorerAddressUrl(PROGRAM_ID)}
           />
           <InfoRow label="Swarm PDA"  value={SWARM_ADDRESS}
-            href={`https://explorer.solana.com/address/${SWARM_ADDRESS}?cluster=devnet`}
+            href={explorerAddressUrl(SWARM_ADDRESS)}
           />
+          <InfoRow label="Treasury Token Account" value={swarm?.treasury ?? '—'}
+            href={swarm?.treasury ? explorerAddressUrl(swarm.treasury) : undefined}
+          />
+          <InfoRow label="USDC Mint" value={swarm?.treasuryMint ?? '—'}
+            href={swarm?.treasuryMint ? explorerAddressUrl(swarm.treasuryMint) : undefined}
+          />
+          <InfoRow label="Treasury Balance" value={formatUsdc(swarm?.treasuryBalance)} color="#14F195"/>
           <InfoRow label="RPC Endpoint" value={RPC_URL} mono={false} color="#606080"/>
           <InfoRow label="Scoring Oracle" value={ORACLE_URL} mono={false} color="#606080"/>
 
@@ -157,9 +169,9 @@ export default function NetworkPage() {
           {[
             ['initialize_swarm',    'Create the swarm PDA and set authority'],
             ['bump_generation',     'Increment swarm.generation before each wave'],
-            ['spawn_agent',         'Allocate agent PDA, inherit lineage context'],
-            ['score_agent',         'Write oracle score to agent account'],
-            ['evaluate_and_prune',  'Terminate or survive; write failure to lineage PDA'],
+            ['spawn_agent',         'Create Agent PDA, store claim/output hash, fund agent USDC ATA'],
+            ['submit_score',        'Oracle writes score; program rejects suspicious high-APY top scores'],
+            ['evaluate_and_prune',  'Survive or terminate; reclaim USDC and write lineage failure'],
             ['respawn_successor',   'Spawn replacement from a terminated agent\'s lineage'],
           ].map(([ix, desc]) => (
             <div key={ix} style={{
@@ -183,8 +195,46 @@ export default function NetworkPage() {
           <InfoRow label="Survival Rate"   value={survivalRate} color="#14F195"/>
           <InfoRow label="Scoring Threshold" value={swarmLoading ? '…' : String(swarm?.scoringThreshold ?? '—')} color="#F5A623"/>
           <InfoRow label="Authority"       value={swarm?.authority ?? '—'}
-            href={swarm?.authority ? `https://explorer.solana.com/address/${swarm.authority}?cluster=devnet` : undefined}
+            href={swarm?.authority ? explorerAddressUrl(swarm.authority) : undefined}
           />
+
+          {/* Agent custody */}
+          <SectionHeader title="AGENT USDC CUSTODY"/>
+          {agents.slice(-8).reverse().map((agent) => (
+            <div key={agent.id} style={{
+              display: 'grid',
+              gridTemplateColumns: '76px 1fr 96px',
+              gap: 12,
+              alignItems: 'center',
+              padding: '8px 0',
+              borderBottom: '1px solid #12121e',
+            }}>
+              <span style={{ fontSize: 10, color: '#9945FF', fontVariantNumeric: 'tabular-nums' }}>
+                #{agent.agent_id}
+              </span>
+              <a
+                href={explorerAddressUrl(agent.agent_usdc_ata)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 10, color: '#38BDF8', textDecoration: 'none', wordBreak: 'break-all' }}
+              >
+                {shortHash(agent.agent_usdc_ata)} ↗
+              </a>
+              <span style={{
+                fontSize: 10,
+                color: agent.agent_usdc_balance && agent.agent_usdc_balance > 0 ? '#14F195' : '#606080',
+                textAlign: 'right',
+                fontVariantNumeric: 'tabular-nums',
+              }}>
+                {formatUsdc(agent.agent_usdc_balance)}
+              </span>
+            </div>
+          ))}
+          {agents.length === 0 && (
+            <div style={{ padding: '8px 0', color: '#404060', fontSize: 11 }}>
+              No Agent PDAs loaded yet.
+            </div>
+          )}
 
           <div style={{ height: 40 }}/>
         </div>

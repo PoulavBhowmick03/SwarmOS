@@ -12,6 +12,13 @@ export interface AgentNode {
   score: number         // 0–100
   task_type: string
   lineage_hash: string
+  claimed_apy_bps: number
+  claimed_apy: number
+  claimed_protocol: string
+  task_output_hash: string
+  agent_usdc_ata: string
+  agent_usdc_balance: number | null
+  agent_usdc_raw_amount: string | null
   swarm: string
   spawn_timestamp: number
 }
@@ -26,6 +33,13 @@ function accountToNode(a: AgentAccount): AgentNode {
     score:            a.score,
     task_type:        a.taskType,
     lineage_hash:     a.lineageHash,
+    claimed_apy_bps:  a.claimedApyBps,
+    claimed_apy:      a.claimedApy,
+    claimed_protocol: a.claimedProtocol,
+    task_output_hash: a.taskOutputHash,
+    agent_usdc_ata:   a.agentUsdcAta,
+    agent_usdc_balance: a.agentUsdcBalance,
+    agent_usdc_raw_amount: a.agentUsdcRawAmount,
     swarm:            a.swarm,
     spawn_timestamp:  a.spawnTimestamp,
   }
@@ -43,8 +57,6 @@ export function useAgents(swarmAddress: string): {
 
   useEffect(() => {
     cancelRef.current = false
-    let intervalId: ReturnType<typeof setInterval>
-
     const load = async () => {
       try {
         const { getClient } = await import('@/lib/client')
@@ -62,13 +74,11 @@ export function useAgents(swarmAddress: string): {
       }
     }
 
-    // Delay initial load by 3s so it doesn't collide with useEvents first poll
-    const initialDelay = setTimeout(() => void load(), 3_000)
-    intervalId = setInterval(load, 20_000)
+    void load()
+    const intervalId = setInterval(load, 20_000)
 
     return () => {
       cancelRef.current = true
-      clearTimeout(initialDelay)
       clearInterval(intervalId)
     }
   }, [swarmAddress])

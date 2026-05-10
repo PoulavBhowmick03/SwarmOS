@@ -4,13 +4,14 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useSwarm }   from '@/hooks/useSwarm'
 import { useLineage } from '@/hooks/useLineage'
+import { useAgents }  from '@/hooks/useAgents'
 import { FundSwarm }  from '@/components/FundSwarm'
 import type { LineageMemoryAccount } from '@/lib/client'
+import type { AgentNode } from '@/hooks/useAgents'
+import { actualApyForProtocol, apyDelta, formatPercent, shortHash } from '@/lib/yields'
+import { EXPLORER_BASE as EXPLORER, SWARM_ADDRESS, SWARM_PROGRAM_ID as PROGRAM_ID } from '@/lib/config'
 
-const SWARM_ADDRESS = process.env.NEXT_PUBLIC_SWARM_ADDRESS ?? '6zbt4nwzetSShWEQi6AnrVwjRqLxANF9acYpPu4hQWVF'
-const PROGRAM_ID    = process.env.NEXT_PUBLIC_SWARM_PROGRAM_ID ?? 'D9moMaWzJw3LVxnZkiXS7xrTUHmF4n3hJeDWCvbB7B1a'
 const ORACLE_WALLET = 'D14J1wLNEZkHEBcM9NW9nUwCkhxuJSUvE5G3E38frDJs'
-const EXPLORER      = 'https://explorer.solana.com'
 
 interface YieldData {
   protocol: string
@@ -25,21 +26,6 @@ interface YieldData {
 // Normalise oracle decimal (0.0926) or legacy percent (9.26) → percent
 function toPercent(apy: number): number {
   return apy < 1 ? apy * 100 : apy
-}
-
-const PROTOCOLS = ['Kamino SOL/USDC', 'JupiterLend USDC', 'Save Protocol', 'Drift USDC', 'Marginfi SOL']
-const REAL_APYS  = [9.26, 4.40, 5.12, 3.87, 7.84]
-
-function inferAPY(agentId: number, score: number) {
-  const idx      = agentId % 5
-  const real     = REAL_APYS[idx]
-  const protocol = PROTOCOLS[idx]
-  if (score === 0) return { protocol, claimed: null as number | null, real, delta: null as number | null }
-  const agentMult = 1 + ((agentId * 17 + 3) % 41) / 100
-  const err       = ((100 - score) / 100) * real * 2.5 * agentMult
-  const claimed   = Math.round((real + err) * 100) / 100
-  const delta     = Math.round((claimed - real) * 100) / 100
-  return { protocol, claimed, real, delta }
 }
 
 function fmt(n: number): string {
@@ -111,10 +97,13 @@ function StatBox({ label, value, accent = '#e8e8e4' }: { label: string; value: s
   )
 }
 
-function DeathCard({ mem }: { mem: LineageMemoryAccount }) {
+function DeathCard({ mem, agent, yields }: { mem: LineageMemoryAccount; agent?: AgentNode; yields: YieldData[] }) {
   const short = (s: string) => s.slice(0, 6) + '…' + s.slice(-4)
   const explorerUrl = `${EXPLORER}/address/${mem.publicKey}?cluster=devnet`
-  const { protocol, claimed, real, delta } = inferAPY(mem.agentId, mem.failureScore)
+  const protocol = agent?.claimed_protocol || 'Unknown protocol'
+  const claimed = agent?.claimed_apy ?? null
+  const real = actualApyForProtocol(yields, protocol)
+  const delta = apyDelta(claimed, real)
   const deltaPos = delta != null && delta > 0
 
   return (
@@ -148,14 +137,14 @@ function DeathCard({ mem }: { mem: LineageMemoryAccount }) {
         <div>
           <div style={{ fontSize: 8, letterSpacing: '0.12em', color: '#505068', textTransform: 'uppercase', marginBottom: 3 }}>Claimed</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623', fontVariantNumeric: 'tabular-nums' }}>
-            {claimed != null ? `${claimed}%` : '—'}
+            {formatPercent(claimed)}
           </div>
           <div style={{ fontSize: 9, color: '#404060' }}>{protocol}</div>
         </div>
         <div>
           <div style={{ fontSize: 8, letterSpacing: '0.12em', color: '#505068', textTransform: 'uppercase', marginBottom: 3 }}>Real</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#14F195', fontVariantNumeric: 'tabular-nums' }}>
-            {real}%
+            {formatPercent(real)}
           </div>
           <div style={{ fontSize: 9, color: '#404060' }}>live rate</div>
         </div>
@@ -174,6 +163,9 @@ function DeathCard({ mem }: { mem: LineageMemoryAccount }) {
       {/* Score + post-mortem */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 10, color: '#606080' }}>
         <span>Score <span style={{ color: '#FF3B3B' }}>{mem.failureScore}/100</span></span>
+        {agent?.task_output_hash && (
+          <span>output <span style={{ color: '#38BDF8' }}>{shortHash(agent.task_output_hash, 6, 4)}</span></span>
+        )}
         {mem.arweaveUri && (
           <a href={mem.arweaveUri} target="_blank" rel="noopener noreferrer"
             style={{ color: '#38BDF8', textDecoration: 'none' }}>
@@ -229,6 +221,7 @@ function YieldCard({ y, isBest }: { y: YieldData; isBest: boolean }) {
 export default function DemoPage() {
   const { swarm }    = useSwarm(SWARM_ADDRESS)
   const { memories } = useLineage(SWARM_ADDRESS)
+  const { agents }   = useAgents(SWARM_ADDRESS)
 
   const [yields, setYields]         = useState<YieldData[]>([])
   const [yieldsTs, setYieldsTs]     = useState<number | null>(null)
@@ -248,10 +241,17 @@ export default function DemoPage() {
     return () => clearInterval(id)
   }, [])
 
-  const survivedCount   = 0 // not available without useAgents — swarm has totalSpawned
+  const agentById       = new Map(agents.map((agent) => [agent.agent_id, agent]))
+  const survivedAgents  = agents.filter((agent) => agent.status === 'Survived')
+  const survivedCount   = survivedAgents.length
+  const survivalRate    = agents.length > 0 ? Math.round((survivedCount / agents.length) * 100) : null
+  const bestAgentClaim  = survivedAgents.length > 0
+    ? Math.max(...survivedAgents.map((agent) => agent.claimed_apy))
+    : null
   const bestYield       = yields.length > 0
     ? Math.max(...yields.map(y => toPercent(y.apy)))
     : null
+  const bestDisplayedApy = bestAgentClaim ?? bestYield
   const topMemories     = memories.slice(0, 5)
   const explorerProgram = `${EXPLORER}/address/${PROGRAM_ID}?cluster=devnet`
   const explorerSwarm   = `${EXPLORER}/address/${SWARM_ADDRESS}?cluster=devnet`
@@ -324,8 +324,8 @@ export default function DemoPage() {
           <SectionLabel>The Problem</SectionLabel>
           <p style={{ margin: 0, fontSize: 14, color: '#a0a0c0', lineHeight: 1.85 }}>
             DeFi yields change hourly across dozens of protocols. A single AI agent making
-            a one-shot recommendation has no feedback mechanism — if it's wrong, it's wrong
-            silently. There's no selection pressure. No learning.
+            a one-shot recommendation has no feedback mechanism — if it&apos;s wrong, it&apos;s wrong
+            silently. There&apos;s no selection pressure. No learning.
           </p>
           <p style={{ margin: '14px 0 0', fontSize: 14, color: '#14F195', lineHeight: 1.85, fontWeight: 500 }}>
             SwarmOS fixes this with Darwinian selection on Solana.
@@ -379,8 +379,9 @@ export default function DemoPage() {
           <Step n="01" title="Spawn" body={
             <>
               5 agents deployed per generation. Each reads live yield data and makes a
-              recommendation. Agents whose lineage carries prior failure memories are warned
-              about specific hallucination patterns before they execute.
+              recommendation. The recommendation APY, protocol, and output hash are stored
+              in the Agent PDA, and the program creates an agent-owned USDC token account
+              funded from the swarm treasury.
             </>
           }/>
 
@@ -388,7 +389,8 @@ export default function DemoPage() {
             <>
               Each agent pays <span style={{ color: '#14F195' }}>$0.01 USDC</span> via x402
               protocol to the scoring oracle before receiving its evaluation.
-              No payment → no score. The oracle compares claimed APY vs real on-chain APY:
+              No payment → no score. The oracle compares claimed APY vs live yield data,
+              while the Anchor program rejects suspiciously high claims receiving top scores:
               <div style={{
                 margin: '12px 0 0', padding: '12px 14px',
                 background: '#0d0d1a', borderRadius: 4, fontSize: 12,
@@ -411,9 +413,9 @@ export default function DemoPage() {
           <Step n="03" title="Eliminate" body={
             <>
               Agents scoring below 60/100 are terminated via on-chain Anchor instruction.
-              Their failure — score, claimed APY, actual APY, Venice AI post-mortem — is
-              written to a <span style={{ color: '#9945FF' }}>LineageMemory PDA</span> on
-              Solana. Permanent. Verifiable. Immutable.
+              Their USDC is reclaimed to the swarm treasury. Their score and failure hash are
+              written to a <span style={{ color: '#9945FF' }}>LineageMemory PDA</span>, while
+              the Agent PDA preserves the original claim and output hash.
             </>
           }/>
 
@@ -428,12 +430,12 @@ export default function DemoPage() {
                 fontFamily: 'monospace', lineHeight: 1.8,
               }}>
                 ⚠ INHERITED FAILURE MEMORY (Generation 1):<br/>
-                Do not claim APY above 10% for Kamino SOL/USDC.<br/>
-                Real rate is 9.26%. Previous agent claimed 18.0% and was terminated.<br/>
+                Do not claim APY above live oracle rate for Kamino SOL/USDC.<br/>
+                Previous agent&apos;s stored claim was rejected and its USDC was reclaimed.<br/>
                 Failure hash: 7f3a2b…e91c
               </div>
               <div style={{ marginTop: 10 }}>
-                The swarm learns. Generation 3 agents have never seen generation 1's mistakes
+                The swarm learns. Generation 3 agents have never seen generation 1&apos;s mistakes
                 — but they carry them.
               </div>
             </>
@@ -459,8 +461,13 @@ export default function DemoPage() {
               value={swarm ? String(swarm.totalSpawned) : '—'}
             />
             <StatBox
+              label="Survival Rate"
+              value={survivalRate != null ? `${survivalRate}%` : '—'}
+              accent="#14F195"
+            />
+            <StatBox
               label="Best APY Found"
-              value={bestYield != null ? `${bestYield.toFixed(2)}%` : '—'}
+              value={bestDisplayedApy != null ? `${bestDisplayedApy.toFixed(2)}%` : '—'}
               accent="#14F195"
             />
           </div>
@@ -470,7 +477,14 @@ export default function DemoPage() {
               <div style={{ fontSize: 9, letterSpacing: '0.14em', color: '#505068', textTransform: 'uppercase', marginBottom: 12 }}>
                 Last {topMemories.length} Terminations — Written to Chain
               </div>
-              {topMemories.map(m => <DeathCard key={m.publicKey} mem={m}/>)}
+              {topMemories.map(m => (
+                <DeathCard
+                  key={m.publicKey}
+                  mem={m}
+                  agent={agentById.get(m.agentId)}
+                  yields={yields}
+                />
+              ))}
             </>
           ) : (
             <div style={{ padding: '16px', color: '#404060', fontSize: 12,
@@ -589,7 +603,7 @@ export default function DemoPage() {
             and bridge automatically. Powered by Jumper Exchange.
           </p>
           {swarm?.treasury ? (
-            <FundSwarm treasuryAddress={swarm.treasury}/>
+            <FundSwarm treasuryAddress={swarm.treasury} recipientWallet={swarm.authority}/>
           ) : (
             <div style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,

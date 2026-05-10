@@ -20,6 +20,10 @@ import { AgentAccount, AgentStatus, LineageMemory, SwarmConfig, TaskType } from 
 type AnyProgram = Program<Idl> & Record<string, any>
 
 const DEVNET_USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+const AGENT_DISCRIMINATOR = Buffer.from([47, 166, 112, 147, 155, 197, 86, 7])
+const LINEAGE_DISCRIMINATOR = Buffer.from([27, 42, 154, 248, 7, 100, 124, 213])
+const AGENT_DISCRIMINATOR_BASE58 = '8yGSUtV5BEn'
+const LINEAGE_DISCRIMINATOR_BASE58 = '5YYojD2jAz8'
 
 export interface SpawnAgentClaim {
   claimedApyBps: number
@@ -129,6 +133,68 @@ function normalizeStatus(value: any): AgentStatus {
       return 'Respawned'
     default:
       return 'Active'
+  }
+}
+
+function taskTypeFromVariant(variant: number | undefined): TaskType {
+  switch (variant) {
+    case 1:
+      return 'CodeReviewer'
+    case 2:
+      return 'DataSynthesizer'
+    case 0:
+    default:
+      return 'YieldOptimizer'
+  }
+}
+
+function statusFromVariant(variant: number | undefined): AgentStatus {
+  switch (variant) {
+    case 1:
+      return 'Scored'
+    case 2:
+      return 'Survived'
+    case 3:
+      return 'Terminated'
+    case 4:
+      return 'Respawned'
+    case 0:
+    default:
+      return 'Active'
+  }
+}
+
+function readU64(data: Buffer, offset: number): number {
+  if (offset + 8 > data.length) return 0
+  return Number(data.readBigUInt64LE(offset))
+}
+
+function readI64(data: Buffer, offset: number): number {
+  if (offset + 8 > data.length) return 0
+  return Number(data.readBigInt64LE(offset))
+}
+
+function readOptionU64(data: Buffer, offset: number): { value: number | null; nextOffset: number } {
+  if (offset >= data.length || data[offset] === 0) {
+    return { value: null, nextOffset: offset + 1 }
+  }
+  return { value: readU64(data, offset + 1), nextOffset: offset + 9 }
+}
+
+function readBorshString(
+  data: Buffer,
+  offset: number,
+  maxLength: number
+): { value: string; nextOffset: number } | null {
+  if (offset + 4 > data.length) return null
+  const length = data.readUInt32LE(offset)
+  if (length > maxLength || offset + 4 + length > data.length) return null
+
+  const start = offset + 4
+  const end = start + length
+  return {
+    value: data.subarray(start, end).toString('utf8'),
+    nextOffset: end
   }
 }
 
@@ -353,7 +419,7 @@ export class SwarmOSClient {
   }
 
   async getAllAgents(swarmAddress: PublicKey | string): Promise<AgentAccount[]> {
-    if (!this.program) return []
+    if (!this.program) return this.getAllAgentsRaw(swarmAddress)
     const swarm = toPublicKey(swarmAddress).toBase58()
     try {
       const accounts = await (this.program.account as any).agent.all()
@@ -361,13 +427,13 @@ export class SwarmOSClient {
         .map((entry: any) => this.normalizeAgentAccount(entry.account))
         .filter((agent: AgentAccount) => agent.swarm === swarm)
     } catch (error) {
-      console.warn(`Unable to fetch agent accounts: ${String(error)}`)
-      return []
+      console.warn(`Anchor agent decoder failed; falling back to raw account decoder: ${String(error)}`)
+      return this.getAllAgentsRaw(swarmAddress)
     }
   }
 
   async getAllLineageMemories(swarmAddress: PublicKey | string): Promise<LineageMemory[]> {
-    if (!this.program) return []
+    if (!this.program) return this.getAllLineageMemoriesRaw(swarmAddress)
     const swarm = toPublicKey(swarmAddress).toBase58()
     try {
       const accounts = await (this.program.account as any).lineageMemory.all()
@@ -375,8 +441,126 @@ export class SwarmOSClient {
         .filter((entry: any) => !entry.account.swarm || entry.account.swarm.toBase58() === swarm)
         .map((entry: any) => this.normalizeLineageMemory(entry.account))
     } catch (error) {
-      console.warn(`Unable to fetch lineage memory accounts: ${String(error)}`)
+      console.warn(`Anchor lineage decoder failed; falling back to raw account decoder: ${String(error)}`)
+      return this.getAllLineageMemoriesRaw(swarmAddress)
+    }
+  }
+
+  private async getAllAgentsRaw(swarmAddress: PublicKey | string): Promise<AgentAccount[]> {
+    const swarm = toPublicKey(swarmAddress).toBase58()
+    try {
+      const accounts = await this.connection.getProgramAccounts(this.programId, {
+        filters: [{ memcmp: { offset: 0, bytes: AGENT_DISCRIMINATOR_BASE58 } }]
+      })
+
+      return accounts
+        .map((entry) => this.decodeAgentAccount(entry.account.data))
+        .filter((agent): agent is AgentAccount => agent !== null)
+        .filter((agent) => agent.swarm === swarm)
+    } catch (error) {
+      console.warn(`Unable to fetch raw agent accounts: ${String(error)}`)
       return []
+    }
+  }
+
+  private async getAllLineageMemoriesRaw(
+    swarmAddress: PublicKey | string
+  ): Promise<LineageMemory[]> {
+    const swarm = toPublicKey(swarmAddress).toBase58()
+    try {
+      const accounts = await this.connection.getProgramAccounts(this.programId, {
+        filters: [{ memcmp: { offset: 0, bytes: LINEAGE_DISCRIMINATOR_BASE58 } }]
+      })
+
+      const memories: LineageMemory[] = []
+      for (const entry of accounts) {
+        const decoded = this.decodeLineageMemory(entry.account.data)
+        if (!decoded || decoded.swarm !== swarm) continue
+        const { swarm: _swarm, ...memory } = decoded
+        memories.push(memory)
+      }
+      return memories
+    } catch (error) {
+      console.warn(`Unable to fetch raw lineage memory accounts: ${String(error)}`)
+      return []
+    }
+  }
+
+  private decodeAgentAccount(data: Buffer): AgentAccount | null {
+    try {
+      if (data.length < 117 || !data.subarray(0, 8).equals(AGENT_DISCRIMINATOR)) return null
+
+      const agentId = readU64(data, 8)
+      const swarm = new PublicKey(data.subarray(16, 48)).toBase58()
+      const parentField = readOptionU64(data, 48)
+      let cursor = parentField.nextOffset
+      const generation = readU64(data, cursor)
+      cursor += 8
+      const taskType = taskTypeFromVariant(data[cursor])
+      cursor += 1
+      const status = statusFromVariant(data[cursor])
+      cursor += 1
+      const score = data[cursor] ?? 0
+      cursor += 1
+      const lineageHash = Buffer.from(data.subarray(cursor, cursor + 32))
+      cursor += 32
+
+      let claimedApyBps = 0
+      let claimedProtocol = ''
+      let taskOutputHash = Buffer.alloc(32)
+      let spawnTimestampOffset = cursor
+
+      if (data.length >= 187) {
+        claimedApyBps = data.readUInt16LE(cursor)
+        cursor += 2
+        const claimedProtocolField = readBorshString(data, cursor, 32)
+        if (claimedProtocolField) {
+          claimedProtocol = claimedProtocolField.value
+          const taskOutputHashOffset = claimedProtocolField.nextOffset
+          taskOutputHash = Buffer.from(data.subarray(taskOutputHashOffset, taskOutputHashOffset + 32))
+          spawnTimestampOffset = taskOutputHashOffset + 32
+        }
+      }
+
+      return {
+        agentId,
+        swarm,
+        parentId: parentField.value,
+        generation,
+        taskType,
+        status,
+        score,
+        lineageHash,
+        claimedApyBps,
+        claimedProtocol,
+        taskOutputHash,
+        spawnTimestamp: readI64(data, spawnTimestampOffset),
+        terminationTimestamp: readI64(data, spawnTimestampOffset + 8)
+      }
+    } catch {
+      return null
+    }
+  }
+
+  private decodeLineageMemory(data: Buffer): (LineageMemory & { swarm: string }) | null {
+    try {
+      if (data.length < 95 || !data.subarray(0, 8).equals(LINEAGE_DISCRIMINATOR)) return null
+
+      const arweaveUriField = readBorshString(data, 90, 100)
+      if (!arweaveUriField) return null
+
+      return {
+        agentId: readU64(data, 8),
+        swarm: new PublicKey(data.subarray(16, 48)).toBase58(),
+        generation: readU64(data, 48),
+        taskType: taskTypeFromVariant(data[56]),
+        failureScore: data[57] ?? 0,
+        failureReasonHash: Buffer.from(data.subarray(58, 90)),
+        arweaveUri: arweaveUriField.value,
+        timestamp: readI64(data, arweaveUriField.nextOffset)
+      }
+    } catch {
+      return null
     }
   }
 

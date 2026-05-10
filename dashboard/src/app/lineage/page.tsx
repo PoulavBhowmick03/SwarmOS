@@ -4,24 +4,19 @@ import Link from 'next/link'
 import { useMemo, useState } from 'react'
 import { useLineage } from '@/hooks/useLineage'
 import { useAgents }  from '@/hooks/useAgents'
+import { useYields }  from '@/hooks/useYields'
 import type { LineageMemoryAccount } from '@/lib/client'
+import type { AgentNode } from '@/hooks/useAgents'
+import type { YieldLike } from '@/lib/yields'
+import { actualApyForProtocol, apyDelta, formatPercent, shortHash } from '@/lib/yields'
+import { SWARM_ADDRESS } from '@/lib/config'
 
-const SWARM_ADDRESS =
-  process.env.NEXT_PUBLIC_SWARM_ADDRESS ?? '6zbt4nwzetSShWEQi6AnrVwjRqLxANF9acYpPu4hQWVF'
-
-const PROTOCOLS = ['Kamino SOL/USDC', 'JupiterLend USDC', 'Save Protocol', 'Drift USDC', 'Marginfi SOL']
-const REAL_APYS = [9.26, 4.40, 5.12, 3.87, 7.84]
-
-function inferAPY(agentId: number, score: number) {
-  const idx      = agentId % 5
-  const real     = REAL_APYS[idx]
-  const protocol = PROTOCOLS[idx]
-  if (score === 0) return { protocol, claimed: null, real, delta: null }
-  const agentMult = 1 + ((agentId * 17 + 3) % 41) / 100
-  const err       = ((100 - score) / 100) * real * 2.5 * agentMult
-  const claimed   = Math.round((real + err) * 100) / 100
-  const delta     = Math.round((claimed - real) * 100) / 100
-  return { protocol, claimed, real, delta }
+function claimSnapshot(mem: LineageMemoryAccount, agent: AgentNode | undefined, yields: YieldLike[]) {
+  const protocol = agent?.claimed_protocol || 'Unknown protocol'
+  const claimed  = agent?.claimed_apy ?? null
+  const actual   = actualApyForProtocol(yields, protocol)
+  const delta    = apyDelta(claimed, actual)
+  return { protocol, claimed, actual, delta }
 }
 
 function ScoreBar({ score, color }: { score: number; color: string }) {
@@ -38,11 +33,20 @@ function ScoreBar({ score, color }: { score: number; color: string }) {
   )
 }
 
-function MemoryCard({ mem, successor }: { mem: LineageMemoryAccount; successor: { agentId: number; generation: number } | null }) {
+function MemoryCard({ mem, agent, yields, successor }: {
+  mem: LineageMemoryAccount
+  agent?: AgentNode
+  yields: YieldLike[]
+  successor: { agentId: number; generation: number } | null
+}) {
   const score                        = mem.failureScore
-  const { protocol, claimed, real, delta } = inferAPY(mem.agentId, score)
+  const { protocol, claimed, actual, delta } = claimSnapshot(mem, agent, yields)
   const deltaPos                     = delta != null && delta > 0
-  const constraint                   = `Do not claim APY above ${(real * 1.1).toFixed(1)}% for ${protocol}. Actual rate: ${real}%`
+  const constraint                   = actual != null
+    ? `Do not claim APY above ${(actual * 1.1).toFixed(2)}% for ${protocol}. Current live rate: ${formatPercent(actual)}`
+    : claimed != null
+      ? `Verify ${protocol} live before reusing the prior ${formatPercent(claimed)} claim. Output hash: ${shortHash(agent?.task_output_hash)}`
+      : `Resolve failure hash ${shortHash(mem.failureReasonHash)} before respawning this lineage branch.`
 
   return (
     <article style={{
@@ -81,12 +85,12 @@ function MemoryCard({ mem, successor }: { mem: LineageMemoryAccount; successor: 
       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 20, rowGap: 6, marginBottom: 12 }}>
         <span className="label-mono" style={{ color: '#404060', alignSelf: 'center' }}>RECOMMENDED</span>
         <span style={{ fontSize: 12, color: '#F5A623', fontVariantNumeric: 'tabular-nums' }}>
-          {claimed != null ? `${protocol} at ${claimed}% APY` : `${protocol} — no claim`}
+          {claimed != null ? `${protocol} at ${formatPercent(claimed)} APY` : `${protocol} - no claim`}
         </span>
 
         <span className="label-mono" style={{ color: '#404060', alignSelf: 'center' }}>REAL APY</span>
         <span style={{ fontSize: 12, color: '#888', fontVariantNumeric: 'tabular-nums' }}>
-          {protocol} at {real}% APY
+          {actual != null ? `${protocol} at ${formatPercent(actual)}` : 'No live oracle match'}
         </span>
 
         {delta != null && (
@@ -159,6 +163,7 @@ function PageNav() {
 export default function LineagePage() {
   const { memories, isLoading } = useLineage(SWARM_ADDRESS)
   const { agents }              = useAgents(SWARM_ADDRESS)
+  const { yields }              = useYields()
   const [sort, setSort]         = useState<SortKey>('generation')
   const [genFilter, setGenFilter] = useState<number | null>(null)
 
@@ -170,6 +175,8 @@ export default function LineagePage() {
     return m
   }, [agents])
 
+  const agentById = useMemo(() => new Map(agents.map(agent => [agent.agent_id, agent])), [agents])
+
   const generations = useMemo(() => [...new Set(memories.map(m => m.generation))].sort((a, b) => a - b), [memories])
 
   const sorted = useMemo(() => {
@@ -177,11 +184,11 @@ export default function LineagePage() {
     return [...filtered].sort((a, b) => {
       if (sort === 'score')      return a.failureScore - b.failureScore
       if (sort === 'generation') return a.generation - b.generation
-      const da = inferAPY(a.agentId, a.failureScore).delta ?? 0
-      const db = inferAPY(b.agentId, b.failureScore).delta ?? 0
+      const da = claimSnapshot(a, agentById.get(a.agentId), yields).delta ?? 0
+      const db = claimSnapshot(b, agentById.get(b.agentId), yields).delta ?? 0
       return db - da
     })
-  }, [memories, sort, genFilter])
+  }, [memories, sort, genFilter, agentById, yields])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#080808', overflow: 'hidden' }}>
@@ -254,7 +261,13 @@ export default function LineagePage() {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 12 }}>
             {sorted.map(m => (
-              <MemoryCard key={m.publicKey} mem={m} successor={successorMap.get(m.agentId) ?? null}/>
+              <MemoryCard
+                key={m.publicKey}
+                mem={m}
+                agent={agentById.get(m.agentId)}
+                yields={yields}
+                successor={successorMap.get(m.agentId) ?? null}
+              />
             ))}
           </div>
         )}

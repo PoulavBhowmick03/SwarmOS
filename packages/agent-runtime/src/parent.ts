@@ -729,11 +729,28 @@ export class ParentAgent {
 
   private async syncAgentCounter(swarm: PublicKey): Promise<void> {
     try {
+      const swarmAccount = await this.client.getSwarm(swarm)
       const agents = await this.client.getAllAgents(swarm)
       const maxAgentId = agents.reduce((max, agent) => Math.max(max, agent.agentId), 0)
       const maxGeneration = agents.reduce((max, agent) => Math.max(max, agent.generation), 0)
-      this.agentCounter = Math.max(this.agentCounter, maxAgentId)
-      this.currentGeneration = Math.max(this.currentGeneration, maxGeneration)
+      const totalSpawned = chainNumber(swarmAccount?.totalSpawned)
+      const swarmGeneration = chainNumber(swarmAccount?.generation)
+
+      if (agents.length === 0 && totalSpawned > 0) {
+        console.warn(
+          chalk.yellow(
+            `[syncAgentCounter] No agent accounts decoded; using swarm.totalSpawned=${totalSpawned}.`
+          )
+        )
+      }
+
+      this.agentCounter = Math.max(this.agentCounter, maxAgentId, totalSpawned)
+      this.currentGeneration = Math.max(this.currentGeneration, maxGeneration, swarmGeneration)
+      console.log(
+        chalk.gray(
+          `Synced chain state: next agent id ${this.agentCounter + 1}, next generation ${this.currentGeneration + 1}`
+        )
+      )
     } catch (err) {
       // getProgramAccounts failed (likely 429) — fall back to swarm.totalSpawned
       console.warn(`[syncAgentCounter] getAllAgents failed: ${err instanceof Error ? err.message : err}`)
@@ -741,8 +758,11 @@ export class ParentAgent {
       try {
         const swarmAccount = await this.client.getSwarm(swarm)
         if (swarmAccount) {
-          this.agentCounter = Math.max(this.agentCounter, swarmAccount.totalSpawned)
-          this.currentGeneration = Math.max(this.currentGeneration, swarmAccount.generation)
+          this.agentCounter = Math.max(this.agentCounter, chainNumber(swarmAccount.totalSpawned))
+          this.currentGeneration = Math.max(
+            this.currentGeneration,
+            chainNumber(swarmAccount.generation)
+          )
           console.warn(`[syncAgentCounter] Recovered: agentCounter=${this.agentCounter} generation=${this.currentGeneration}`)
         }
       } catch (fallbackErr) {
@@ -1172,6 +1192,17 @@ function asStringArray(value: unknown): string[] {
 function numberOr(fallback: number, value: unknown): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function chainNumber(value: unknown): number {
+  if (value == null) return 0
+  if (typeof value === 'number') return value
+  if (typeof value === 'bigint') return Number(value)
+  if (typeof (value as { toNumber?: unknown }).toNumber === 'function') {
+    return (value as { toNumber: () => number }).toNumber()
+  }
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
 function lineageMemoryRootDir(): string {

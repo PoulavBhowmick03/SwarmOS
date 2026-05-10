@@ -1,23 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
 import type { SwarmEvent } from '@/lib/client'
-
-/* ─── APY inference ──────────────────────────────────── */
-const PROTOCOLS = ['Kamino SOL/USDC', 'JupiterLend USDC', 'Save Protocol', 'Drift USDC', 'Marginfi SOL'] as const
-const REAL_APYS = [9.26, 4.40, 5.12, 3.87, 7.84]
-
-function agentProtocol(agentId: number): { name: string; realAPY: number } {
-  const idx = agentId % 5
-  return { name: PROTOCOLS[idx], realAPY: REAL_APYS[idx] }
-}
-
-function agentClaimedAPY(agentId: number, score: number): number | null {
-  if (score === 0) return null
-  const { realAPY } = agentProtocol(agentId)
-  const err = ((100 - score) / 100) * realAPY * 2.5
-  return Math.round((realAPY + err) * 100) / 100
-}
+import { apyDelta, formatPercent, shortHash } from '@/lib/yields'
 
 /* ─── Pill styles ────────────────────────────────────── */
 const PILL_STYLES: Record<SwarmEvent['type'], { bg: string; fg: string; bd: string }> = {
@@ -48,32 +32,34 @@ function eventMainLine(e: SwarmEvent): string {
   switch (e.type) {
     case 'AgentSpawned': {
       const mem = e.inheritedMemories ?? 0
-      return `Agent #${id} deployed · Gen ${e.generation ?? 0} · inheriting ${mem} failure memories`
+      const claim = e.claimedAPY != null && e.protocol
+        ? ` · ${e.protocol} ${formatPercent(e.claimedAPY)}`
+        : ''
+      return `Agent #${id} deployed · Gen ${e.generation ?? 0}${claim} · inheriting ${mem} failure memories`
     }
     case 'AgentScored': {
       if (id == null) return 'Agent scored'
       const score    = e.score ?? 0
-      const protocol = e.protocol ?? agentProtocol(id).name
-      const claimed  = e.claimedAPY ?? agentClaimedAPY(id, score)
-      const claimStr = claimed != null ? `at ${claimed}%` : 'no claim'
+      const protocol = e.protocol ?? 'recorded claim'
+      const claimStr = e.claimedAPY != null ? `at ${formatPercent(e.claimedAPY)}` : 'claim pending'
       return `Agent #${id} · ${protocol} ${claimStr} · score ${score}/100`
     }
     case 'AgentSurvived': {
       if (id == null) return 'Agent survived'
       const score    = e.score ?? 0
-      const protocol = e.protocol ?? agentProtocol(id).name
-      const claimed  = e.claimedAPY ?? agentClaimedAPY(id, score)
-      const claimStr = claimed != null ? `at ${claimed}%` : 'no claim'
+      const protocol = e.protocol ?? 'recorded claim'
+      const claimStr = e.claimedAPY != null ? `at ${formatPercent(e.claimedAPY)}` : 'claim pending'
       return `Agent #${id} · ${protocol} ${claimStr} · score ${score}/100 ✓`
     }
     case 'AgentTerminated': {
       if (id == null) return 'Agent eliminated'
       const score    = e.score ?? 0
-      const protocol = e.protocol ?? agentProtocol(id).name
-      const claimed  = e.claimedAPY ?? agentClaimedAPY(id, score)
-      const actual   = e.actualAPY ?? agentProtocol(id).realAPY
-      if (claimed != null) {
-        return `Agent #${id} eliminated · ${protocol} recommended ${claimed}% · real was ${actual}%`
+      const protocol = e.protocol ?? 'recorded claim'
+      if (e.claimedAPY != null && e.actualAPY != null) {
+        return `Agent #${id} eliminated · ${protocol} recommended ${formatPercent(e.claimedAPY)} · real was ${formatPercent(e.actualAPY)}`
+      }
+      if (e.claimedAPY != null) {
+        return `Agent #${id} eliminated · ${protocol} claimed ${formatPercent(e.claimedAPY)} · score ${score}/100`
       }
       return `Agent #${id} eliminated · ${protocol} · score ${score}/100`
     }
@@ -81,9 +67,7 @@ function eventMainLine(e: SwarmEvent): string {
       const newId    = e.newAgentId
       const parentId = e.parentAgentId
       if (newId == null) return 'Agent respawned'
-      const actual   = e.actualAPY ?? (parentId != null ? agentProtocol(parentId).realAPY : null)
-      const threshold = actual != null ? (actual * 1.1).toFixed(1) : '—'
-      return `Agent #${newId} respawned from #${parentId ?? '?'} · warned: do not claim APY > ${threshold}%`
+      return `Agent #${newId} respawned from #${parentId ?? '?'} · lineage context inherited`
     }
   }
 }
@@ -93,25 +77,28 @@ function eventSubLine(e: SwarmEvent): { text: string; color: string } {
   switch (e.type) {
     case 'AgentSpawned':
       return {
-        text: `Task: find best yield opportunity · Gen ${e.generation ?? 0}`,
+        text: e.agentUsdcAta
+          ? `Agent USDC ATA funded · ${shortHash(e.agentUsdcAta, 6, 4)}`
+          : `Task: find best yield opportunity · Gen ${e.generation ?? 0}`,
         color: '#505068',
       }
     case 'AgentScored': {
       const score   = e.score ?? 0
       if (id == null) return { text: 'Scored', color: '#888' }
-      const realAPY = agentProtocol(id).realAPY
-      const claimed = e.claimedAPY ?? agentClaimedAPY(id, score)
-      if (claimed == null) return { text: 'No APY claim recorded', color: '#505068' }
-      const delta = Math.abs(claimed - realAPY)
+      if (e.claimedAPY == null) return { text: 'No APY claim recorded', color: '#505068' }
+      const delta = apyDelta(e.claimedAPY, e.actualAPY)
       if (score >= 60) {
         return {
-          text: `Recommendation matched live APY within ${delta.toFixed(2)}%`,
+          text: delta != null
+            ? `Recommendation matched live APY within ${Math.abs(delta).toFixed(2)}%`
+            : `Stored on-chain claim ${formatPercent(e.claimedAPY)}`,
           color: '#14F195',
         }
       } else {
-        const mult = realAPY > 0 ? (claimed / realAPY).toFixed(1) : '?'
         return {
-          text: `APY claim ${mult}x higher than real rate`,
+          text: delta != null
+            ? `APY claim missed live rate by ${Math.abs(delta).toFixed(2)}%`
+            : `Output hash ${shortHash(e.taskOutputHash)}`,
           color: '#F5A623',
         }
       }
@@ -201,15 +188,7 @@ interface Props {
 }
 
 export function AgentFeed({ events }: Props) {
-  const newestRef = useRef<number | undefined>(events[0]?.timestamp)
-  const [latestTs, setLatestTs] = useState<number | undefined>(events[0]?.timestamp)
-
-  useEffect(() => {
-    if (events[0]?.timestamp !== newestRef.current) {
-      newestRef.current = events[0]?.timestamp
-      setLatestTs(events[0]?.timestamp)
-    }
-  }, [events])
+  const latestTs = events[0]?.timestamp
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', overflow: 'hidden' }}>

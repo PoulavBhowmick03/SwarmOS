@@ -1,11 +1,10 @@
+import { ORACLE_URL } from '@/lib/config'
+
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    const oracleUrl = process.env.NEXT_PUBLIC_ORACLE_URL ||
-                      process.env.NEXT_PUBLIC_SCORING_ORACLE_URL ||
-                      'http://localhost:3001'
-    const res = await fetch(`${oracleUrl}/yields`, {
+    const res = await fetch(`${ORACLE_URL}/yields`, {
       next: { revalidate: 60 },
     })
     if (!res.ok) throw new Error('Oracle unavailable')

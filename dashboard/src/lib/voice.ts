@@ -12,13 +12,29 @@ interface QueueItem {
 export class VoiceQueue {
   private queue: QueueItem[] = []
   private isPlaying = false
+  private isProcessing = false
   private muted = false
+  private currentAudio: HTMLAudioElement | null = null
+  private currentAbort: AbortController | null = null
+  private currentUrl: string | null = null
+  private cooldownUntil = 0
+  private consecutiveFailures = 0
   readonly voiceId: string
   private onPlayingChange?: (playing: boolean) => void
+  private onErrorChange?: (rateLimited: boolean) => void
 
-  constructor(voiceId: string, onPlayingChange?: (playing: boolean) => void) {
+  constructor(
+    voiceId: string,
+    onPlayingChange?: (playing: boolean) => void,
+    onErrorChange?: (rateLimited: boolean) => void,
+  ) {
     this.voiceId = voiceId
     this.onPlayingChange = onPlayingChange
+    this.onErrorChange = onErrorChange
+  }
+
+  get rateLimited(): boolean {
+    return Date.now() < this.cooldownUntil
   }
 
   enqueue(text: string, settings?: VoiceSettings, priority: 'high' | 'normal' = 'normal'): void {
@@ -42,11 +58,24 @@ export class VoiceQueue {
 
   setMuted(muted: boolean): void {
     this.muted = muted
-    if (muted) this.queue = []
+    if (muted) {
+      this.clear()
+      this.cooldownUntil = 0
+      this.consecutiveFailures = 0
+      this.onErrorChange?.(false)
+    }
   }
 
   clear(): void {
     this.queue = []
+    this.currentAbort?.abort()
+    this.currentAbort = null
+    if (this.currentAudio) {
+      this.currentAudio.pause()
+      this.currentAudio.src = ''
+      this.currentAudio = null
+    }
+    this.revokeCurrentUrl()
   }
 
   get playing(): boolean {
@@ -59,47 +88,135 @@ export class VoiceQueue {
   }
 
   private async processQueue(): Promise<void> {
-    if (this.queue.length === 0) {
-      this.setPlaying(false)
-      return
-    }
-
-    const item = this.queue.shift()!
-    this.setPlaying(true)
+    if (this.isProcessing) return
+    this.isProcessing = true
 
     try {
-      await this.speak(item.text, item.settings)
-    } catch (err) {
-      console.error('[VoiceQueue] speak error:', err)
-    }
+      while (!this.muted && this.queue.length > 0) {
+        // Respect cooldown — wait it out rather than draining and dropping items
+        const now = Date.now()
+        if (now < this.cooldownUntil) {
+          await sleep(Math.min(this.cooldownUntil - now, 3_000))
+          continue
+        }
 
-    void this.processQueue()
+        const item = this.queue.shift()!
+        this.setPlaying(true)
+
+        try {
+          await this.speak(item.text, item.settings)
+          // Reset failure streak on success
+          if (this.consecutiveFailures > 0) {
+            this.consecutiveFailures = 0
+            this.onErrorChange?.(false)
+          }
+        } catch (err) {
+          this.consecutiveFailures++
+          console.error('[VoiceQueue] speak error:', err)
+        }
+
+        await sleep(200)
+      }
+    } finally {
+      this.isProcessing = false
+      this.setPlaying(false)
+    }
   }
 
   private async speak(text: string, settings: VoiceSettings): Promise<void> {
-    const res = await fetch('/api/voice', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text,
-        voiceId: this.voiceId,
-        model_id: 'eleven_turbo_v2',
-        voice_settings: settings,
-      }),
-    })
+    this.currentAbort = new AbortController()
+    const timeoutId = setTimeout(() => this.currentAbort?.abort(), 20_000)
 
-    if (!res.ok) throw new Error(`Voice API ${res.status}`)
+    let blob: Blob
+    try {
+      const res = await fetch('/api/voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: this.currentAbort.signal,
+        body: JSON.stringify({
+          text,
+          voiceId: this.voiceId,
+          model_id: 'eleven_turbo_v2',
+          voice_settings: settings,
+        }),
+      })
 
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
+      if (!res.ok) {
+        if (res.status === 429 || res.status === 503) {
+          const retryAfter = res.headers.get('Retry-After')
+          const waitMs = retryAfter ? Number(retryAfter) * 1000 : 15_000
+          this.cooldownUntil = Date.now() + Math.min(waitMs, 60_000)
+          this.onErrorChange?.(true)
+        }
+        throw new Error(`Voice API ${res.status}`)
+      }
+      blob = await res.blob()
+    } finally {
+      clearTimeout(timeoutId)
+      this.currentAbort = null
+    }
 
-    await new Promise<void>((resolve) => {
-      const audio = new Audio(url)
-      audio.onended = () => { URL.revokeObjectURL(url); resolve() }
-      audio.onerror = () => { URL.revokeObjectURL(url); resolve() }
-      void audio.play().catch(() => resolve())
-    })
+    await this.playBlob(blob, text)
   }
+
+  private async playBlob(blob: Blob, text: string): Promise<void> {
+    if (this.queue.length === 0) {
+      // no-op; keep the method body below linear for cleanup
+    }
+
+    const url = URL.createObjectURL(blob)
+    this.currentUrl = url
+
+    const audio = new Audio(url)
+    this.currentAudio = audio
+    audio.preload = 'auto'
+
+    const maxPlaybackMs = Math.min(45_000, Math.max(8_000, text.length * 95))
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          cleanup()
+          reject(new Error('Voice playback timed out'))
+        }, maxPlaybackMs)
+
+        const cleanup = () => {
+          clearTimeout(timeoutId)
+          audio.onended = null
+          audio.onerror = null
+        }
+
+        audio.onended = () => {
+          cleanup()
+          resolve()
+        }
+        audio.onerror = () => {
+          cleanup()
+          reject(new Error('Voice playback failed'))
+        }
+
+        void audio.play().catch((error) => {
+          cleanup()
+          reject(error)
+        })
+      })
+    } finally {
+      audio.pause()
+      audio.src = ''
+      if (this.currentAudio === audio) this.currentAudio = null
+      this.revokeCurrentUrl()
+    }
+  }
+
+  private revokeCurrentUrl(): void {
+    if (!this.currentUrl) return
+    URL.revokeObjectURL(this.currentUrl)
+    this.currentUrl = null
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 export type SwarmEventType =

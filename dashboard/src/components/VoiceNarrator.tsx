@@ -89,18 +89,19 @@ interface Props {
 }
 
 export function VoiceNarrator({ events }: Props) {
-  const [muted, setMuted]       = useState(false)
-  const [isPlaying, setPlaying] = useState(false)
-  const voiceQueueRef           = useRef<VoiceQueue | null>(null)
-  const seenRef                 = useRef<Set<string>>(new Set())
-  const initializedRef          = useRef(false)
+  const [muted, setMuted]           = useState(false)
+  const [isPlaying, setPlaying]     = useState(false)
+  const [rateLimited, setRateLimit] = useState(false)
+  const voiceQueueRef               = useRef<VoiceQueue | null>(null)
+  const seenRef                     = useRef<Set<string>>(new Set())
+  const initializedRef              = useRef(false)
   // Track which generations we've already announced as a wave
-  const announcedGenRef         = useRef<Set<number>>(new Set())
+  const announcedGenRef             = useRef<Set<number>>(new Set())
   // Buffer spawns briefly to batch them into one wave announcement
-  const spawnBufferRef          = useRef<Map<number, { count: number; memories: number; timer: ReturnType<typeof setTimeout> | null }>>(new Map())
+  const spawnBufferRef              = useRef<Map<number, { count: number; memories: number; timer: ReturnType<typeof setTimeout> | null }>>(new Map())
 
   useEffect(() => {
-    voiceQueueRef.current = new VoiceQueue(VOICE_ID, setPlaying)
+    voiceQueueRef.current = new VoiceQueue(VOICE_ID, setPlaying, setRateLimit)
     return () => voiceQueueRef.current?.clear()
   }, [])
 
@@ -184,8 +185,8 @@ export function VoiceNarrator({ events }: Props) {
         padding:    '4px 10px',
         borderRadius: 3,
         border:     '1px solid #2a2a2a',
-        background: isPlaying && !muted ? '#9945FF22' : '#111',
-        color:      isPlaying && !muted ? '#9945FF'   : '#555',
+        background: rateLimited && !muted ? '#F5A62322' : isPlaying && !muted ? '#9945FF22' : '#111',
+        color:      rateLimited && !muted ? '#F5A623'   : isPlaying && !muted ? '#9945FF'   : '#555',
         cursor:     'pointer',
         fontSize:   10,
         letterSpacing: '0.12em',
@@ -197,7 +198,12 @@ export function VoiceNarrator({ events }: Props) {
       onMouseOver={(e) => { if (!isPlaying || muted) e.currentTarget.style.color = '#888' }}
       onMouseOut={(e)  => { if (!isPlaying || muted) e.currentTarget.style.color = '#555' }}
     >
-      {isPlaying && !muted ? (
+      {rateLimited && !muted ? (
+        <>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: '#F5A623' }}/>
+          RATE LIMITED
+        </>
+      ) : isPlaying && !muted ? (
         <>
           <span style={{
             width: 6, height: 6, borderRadius: '50%', flexShrink: 0,

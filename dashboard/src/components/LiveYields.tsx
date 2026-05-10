@@ -2,12 +2,13 @@
 
 import { useYields } from '@/hooks/useYields'
 import type { YieldEntry } from '@/hooks/useYields'
+import { formatTvl, opportunityName } from '@/lib/yields'
 
 const FALLBACK: YieldEntry[] = [
-  { protocol: 'Kamino SOL/USDC',  apy: 9.26, trend: 'up',     tvl: '$45.2M' },
-  { protocol: 'JupiterLend USDC', apy: 4.40, trend: 'stable',  tvl: '$28.1M' },
-  { protocol: 'Save Protocol',    apy: 5.12, trend: 'down',    tvl: '$62.4M' },
-  { protocol: 'Drift USDC',       apy: 3.87, trend: 'stable',  tvl: '$19.8M' },
+  { protocol: 'Kamino',      vault: 'SOL/USDC',     apy: 9.26, trend: 'up',     tvl: 45000000  },
+  { protocol: 'JupiterLend', vault: 'USDC',          apy: 4.40, trend: 'stable', tvl: 430000000 },
+  { protocol: 'Save',        vault: 'USDC',          apy: 2.07, trend: 'down',   tvl: 10900000  },
+  { protocol: 'Kamino',      vault: 'USDC Lending',  apy: 3.41, trend: 'stable', tvl: 8100000   },
 ]
 
 function YieldCard({ entry, maxApy, isBest }: { entry: YieldEntry; maxApy: number; isBest: boolean }) {
@@ -15,6 +16,7 @@ function YieldCard({ entry, maxApy, isBest }: { entry: YieldEntry; maxApy: numbe
   const trendColor = entry.trend === 'up' ? '#14F195' : entry.trend === 'down' ? '#FF3B3B' : '#444'
   const trendIcon  = entry.trend === 'up' ? '↑' : entry.trend === 'down' ? '↓' : '→'
   const shortName  = entry.protocol.split(' ')[0].toUpperCase()
+  const tvl        = entry.tvl ? formatTvl(entry.tvl) : null
 
   return (
     <div style={{
@@ -49,8 +51,8 @@ function YieldCard({ entry, maxApy, isBest }: { entry: YieldEntry; maxApy: numbe
           {entry.apy.toFixed(2)}%
         </span>
         <span style={{ fontSize: 10, color: trendColor }}>{trendIcon}</span>
-        {entry.tvl && (
-          <span style={{ fontSize: 8, color: '#505068', marginLeft: 'auto' }}>{entry.tvl}</span>
+        {tvl && (
+          <span style={{ fontSize: 8, color: '#505068', marginLeft: 'auto' }}>{tvl}</span>
         )}
       </div>
 
@@ -89,7 +91,7 @@ export function LiveYields() {
       <div style={{ display: 'flex', gap: 7 }}>
         {data.slice(0, 4).map(y => (
           <YieldCard
-            key={y.protocol}
+            key={opportunityName(y)}
             entry={y}
             maxApy={maxApy}
             isBest={y.apy === maxApy}

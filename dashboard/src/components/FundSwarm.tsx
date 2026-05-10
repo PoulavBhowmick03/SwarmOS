@@ -5,13 +5,14 @@ import { buildJumperUrl, SOLANA_CHAIN_ID, USDC_ON_SOLANA } from '@/lib/lifi'
 
 interface Props {
   treasuryAddress: string
+  recipientWallet?: string
 }
 
-export function FundSwarm({ treasuryAddress }: Props) {
+export function FundSwarm({ treasuryAddress, recipientWallet = treasuryAddress }: Props) {
   const [isOpen, setIsOpen] = useState(false)
 
-  const jumperUrl = buildJumperUrl(treasuryAddress)
-  const widgetUrl = `https://jumper.exchange/?fromChain=1&toChain=${SOLANA_CHAIN_ID}&toToken=${USDC_ON_SOLANA}&toWalletAddress=${encodeURIComponent(treasuryAddress)}`
+  const jumperUrl = buildJumperUrl(recipientWallet)
+  const widgetUrl = `https://jumper.exchange/?fromChain=1&toChain=${SOLANA_CHAIN_ID}&toToken=${USDC_ON_SOLANA}&toWalletAddress=${encodeURIComponent(recipientWallet)}`
 
   return (
     <>
@@ -126,6 +127,26 @@ export function FundSwarm({ treasuryAddress }: Props) {
                 {treasuryAddress}
               </div>
             </div>
+
+            {recipientWallet !== treasuryAddress && (
+              <div
+                style={{
+                  background: 'var(--bg-3)',
+                  border: '1px solid var(--rule)',
+                  borderRadius: 6,
+                  padding: '10px 12px',
+                  marginBottom: 16,
+                  fontSize: 11,
+                }}
+              >
+                <div style={{ color: 'var(--ink-4)', fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
+                  Recipient wallet
+                </div>
+                <div style={{ color: 'var(--ink)', wordBreak: 'break-all', fontFamily: 'var(--mono)' }}>
+                  {recipientWallet}
+                </div>
+              </div>
+            )}
 
             <div style={{ marginBottom: 20 }}>
               <iframe

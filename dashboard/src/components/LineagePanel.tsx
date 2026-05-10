@@ -1,36 +1,17 @@
 'use client'
 
 import type { LineageMemoryAccount } from '@/lib/client'
-
-/* ─── APY inference ──────────────────────────────────── */
-const PROTOCOLS = ['Kamino SOL/USDC', 'JupiterLend USDC', 'Save Protocol', 'Drift USDC', 'Marginfi SOL']
-const REAL_APYS = [9.26, 4.40, 5.12, 3.87, 7.84]
-
-function inferAPY(agentId: number, score: number): {
-  protocol: string
-  claimed: number | null
-  real: number
-  delta: number | null
-} {
-  const idx      = agentId % 5
-  const real     = REAL_APYS[idx]
-  const protocol = PROTOCOLS[idx]
-  if (score === 0) return { protocol, claimed: null, real, delta: null }
-  // Per-agent multiplier (1.00–1.40) so two agents in the same protocol bucket
-  // show distinct claimed APYs rather than identical cards
-  const agentMult = 1 + ((agentId * 17 + 3) % 41) / 100
-  const err     = ((100 - score) / 100) * real * 2.5 * agentMult
-  const claimed = Math.round((real + err) * 100) / 100
-  const delta   = Math.round((claimed - real) * 100) / 100
-  return { protocol, claimed, real, delta }
-}
+import type { AgentNode } from '@/hooks/useAgents'
+import type { YieldLike } from '@/lib/yields'
+import { actualApyForProtocol, apyDelta, formatPercent, shortHash } from '@/lib/yields'
 
 /* ─── Failure reason text ────────────────────────────── */
-function failureReason(score: number, delta: number | null): string {
+function failureReason(score: number, claimed: number | null, actual: number | null, delta: number | null): string {
   if (score === 0) {
-    return 'Agent eliminated before scoring completed. No APY comparison available.'
+    return 'Agent eliminated before scoring completed. Its stored output hash remains available on the Agent PDA.'
   }
-  if (delta == null) return 'No APY comparison available.'
+  if (claimed == null) return 'The lineage record is present, but the matching Agent PDA claim could not be loaded.'
+  if (actual == null || delta == null) return 'Claim was stored on-chain, but no matching live oracle yield row is currently available.'
   if (delta > 5) {
     return 'Significantly overestimated yield. Agent will not be trusted with high APY claims in future generations.'
   }
@@ -57,11 +38,23 @@ function ScoreBar({ score }: { score: number }) {
 }
 
 /* ─── Death card ─────────────────────────────────────── */
-function LineageCard({ mem, index }: { mem: LineageMemoryAccount; index: number }) {
+function LineageCard({ mem, index, agent, yields }: {
+  mem: LineageMemoryAccount
+  index: number
+  agent?: AgentNode
+  yields: YieldLike[]
+}) {
   const score = mem.failureScore
-  const { protocol, claimed, real, delta } = inferAPY(mem.agentId, score)
-  const reason     = failureReason(score, delta)
-  const successor  = `Do not claim APY above ${(real * 1.1).toFixed(1)}% for ${protocol}. Actual rate: ${real}%`
+  const protocol   = agent?.claimed_protocol || 'Unknown protocol'
+  const claimed    = agent?.claimed_apy ?? null
+  const actual     = actualApyForProtocol(yields, protocol)
+  const delta      = apyDelta(claimed, actual)
+  const reason     = failureReason(score, claimed, actual, delta)
+  const successor  = actual != null
+    ? `Do not claim APY above ${(actual * 1.1).toFixed(2)}% for ${protocol}. Current live rate: ${formatPercent(actual)}`
+    : claimed != null
+      ? `Re-check ${protocol} with live data before claiming above ${formatPercent(claimed)}. Prior output hash: ${shortHash(agent?.task_output_hash)}`
+      : `Resolve failure hash ${shortHash(mem.failureReasonHash)} before reusing this lineage branch.`
   const isDeltaPos = delta != null && delta > 0
 
   return (
@@ -105,12 +98,12 @@ function LineageCard({ mem, index }: { mem: LineageMemoryAccount; index: number 
       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 16, rowGap: 5 }}>
         <span className="label-mono" style={{ color: '#444', alignSelf: 'start', paddingTop: 1 }}>RECOMMENDED</span>
         <span style={{ fontSize: 12, color: '#F5A623', fontVariantNumeric: 'tabular-nums' }}>
-          {claimed != null ? `${protocol} at ${claimed}% APY` : `${protocol} — no claim`}
+          {claimed != null ? `${protocol} at ${formatPercent(claimed)} APY` : `${protocol} - no claim`}
         </span>
 
         <span className="label-mono" style={{ color: '#444', alignSelf: 'start', paddingTop: 1 }}>REAL APY</span>
         <span style={{ fontSize: 12, color: '#888', fontVariantNumeric: 'tabular-nums' }}>
-          {protocol} at {real}% APY
+          {actual != null ? `${protocol} at ${formatPercent(actual)}` : 'No live oracle match'}
         </span>
 
         {delta != null && (
@@ -158,10 +151,14 @@ function LineageCard({ mem, index }: { mem: LineageMemoryAccount; index: number 
 /* ─── LineagePanel ───────────────────────────────────── */
 interface Props {
   memories: LineageMemoryAccount[]
+  agents?: AgentNode[]
+  yields?: YieldLike[]
   isLoading: boolean
 }
 
-export function LineagePanel({ memories, isLoading }: Props) {
+export function LineagePanel({ memories, agents = [], yields = [], isLoading }: Props) {
+  const agentById = new Map(agents.map((agent) => [agent.agent_id, agent]))
+
   return (
     <section style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', overflow: 'hidden' }}>
       <div style={{
@@ -204,7 +201,15 @@ export function LineagePanel({ memories, isLoading }: Props) {
             </div>
           </div>
         ) : (
-          memories.map((m, i) => <LineageCard key={m.publicKey} mem={m} index={i}/>)
+          memories.map((m, i) => (
+            <LineageCard
+              key={m.publicKey}
+              mem={m}
+              index={i}
+              agent={agentById.get(m.agentId)}
+              yields={yields}
+            />
+          ))
         )}
       </div>
     </section>
