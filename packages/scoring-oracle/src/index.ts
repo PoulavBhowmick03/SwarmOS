@@ -4,6 +4,7 @@ import express from 'express'
 import fs from 'fs'
 import path from 'path'
 import { createEvaluateRouter, PaymentRecord } from './routes/evaluate'
+import { fetchLiveYields } from './data/yields'
 import { createX402EvaluateMiddleware } from './x402/middleware'
 
 const repoRoot = findRepoRoot(__dirname)
@@ -22,6 +23,15 @@ app.get('/health', (_req, res) => {
 
 app.get('/payments', (_req, res) => {
   res.json({ payments })
+})
+
+app.get('/yields', async (_req, res) => {
+  try {
+    const yields = await fetchLiveYields()
+    res.json(yields)
+  } catch (error) {
+    res.status(500).json({ error: String(error) })
+  }
 })
 
 app.use(createX402EvaluateMiddleware())
