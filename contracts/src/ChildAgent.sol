@@ -8,6 +8,7 @@ contract ChildAgent {
     uint256 public spawnTimestamp;
 
     event RecallChild(address indexed child, string reason, string ipfsCid, uint256 timestamp);
+    event AgentDecisionExecuted(bytes32 indexed decisionHash, string actionType, uint256 amountBps, uint256 timestamp);
 
     modifier onlyParent() {
         require(msg.sender == parent, "Only parent");
@@ -25,7 +26,12 @@ contract ChildAgent {
     }
 
     function recallChild(string calldata reason, string calldata ipfsCid) external onlyParent {
+        require(active, "ChildAgent: already recalled");
         active = false;
         emit RecallChild(address(this), reason, ipfsCid, block.timestamp);
+    }
+
+    function recordDecisionHash(bytes32 hash, string calldata actionType, uint256 amountBps) external onlyParent {
+        emit AgentDecisionExecuted(hash, actionType, amountBps, block.timestamp);
     }
 }

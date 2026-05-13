@@ -21,7 +21,7 @@ out = "out"
 libs = ["lib"]
 remappings = ["@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"]
 solc_version = "0.8.28"
-fork_url = "https://rpc.mantle.xyz"
+eth_rpc_url = "https://rpc.mantle.xyz"
 
 [rpc_endpoints]
 mantle = "https://rpc.mantle.xyz"

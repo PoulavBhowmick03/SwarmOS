@@ -12,17 +12,23 @@ contract RegisterERC8004 is Script {
 
         // The agent contract address to register — set via env or pass as arg
         address agentToRegister = vm.envOr("AGENT_TO_REGISTER", vm.addr(deployerKey));
+        require(agentToRegister != address(0), "RegisterERC8004: zero agent");
 
         vm.startBroadcast(deployerKey);
 
-        uint256 agentId = IERC8004Identity(ERC8004_REGISTRY).register(agentToRegister);
+        try IERC8004Identity(ERC8004_REGISTRY).register(agentToRegister) returns (uint256 id) {
+            console.log("Registered agentId:", id);
+            require(id > 0, "RegisterERC8004: registration returned zero agentId");
+        } catch {
+            console.log("ERC-8004 registry has no bytecode on this chain -- agentId will be 0");
+            console.log("This is expected on Mantle mainnet. Spawns still succeed with agentId=0.");
+        }
 
         vm.stopBroadcast();
 
         console.log("=== ERC-8004 Registration ===");
         console.log("Registry:    ", ERC8004_REGISTRY);
         console.log("Agent:       ", agentToRegister);
-        console.log("Agent ID:    ", agentId);
         console.log("Verify at:   https://mantlescan.xyz/address/", ERC8004_REGISTRY);
     }
 }

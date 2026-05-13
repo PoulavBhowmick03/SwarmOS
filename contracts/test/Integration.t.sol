@@ -16,6 +16,13 @@ contract MockERC8004RegistryFork {
     }
 }
 
+interface ILBPair {
+    function getActiveId() external view returns (uint24 activeId);
+    function getReserves() external view returns (uint128 reserveX, uint128 reserveY);
+    function getTokenX() external view returns (address tokenX);
+    function getTokenY() external view returns (address tokenY);
+}
+
 interface IAavePool {
     struct ReserveConfigurationMap {
         uint256 data;
@@ -104,6 +111,26 @@ contract IntegrationTest is Test {
         assertEq(lineage[1], "QmCID2");
         assertEq(lineage[2], "QmCID3");
         assertEq(lineageRegistry.getLatestCID("test-agent"), "QmCID3");
+    }
+
+    function test_MerchantMoe_PoolExists() public {
+        // USDe/USDC LB pair verified via LBFactory.getAllLBPairs on Mantle mainnet (binStep=1)
+        address pair = 0x7e78B65d0525339dF5F4aA22b82d9e97584Da8FC;
+        address expectedUsde = 0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34;
+        address expectedUsdc = 0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9;
+
+        if (pair.code.length == 0) {
+            vm.skip(true, "Merchant Moe USDe/USDC pair has no bytecode on current Mantle RPC");
+        }
+
+        assertEq(ILBPair(pair).getTokenX(), expectedUsde, "tokenX must be USDe");
+        assertEq(ILBPair(pair).getTokenY(), expectedUsdc, "tokenY must be USDC");
+
+        (uint128 reserveX, uint128 reserveY) = ILBPair(pair).getReserves();
+        assertGt(uint256(reserveX) + uint256(reserveY), 0, "USDe/USDC pair has zero reserves");
+
+        uint24 activeId = ILBPair(pair).getActiveId();
+        assertGt(activeId, 0, "active bin ID must be nonzero");
     }
 
     function test_SpawnFactoryAndLineageRegistry_RegistersSequentialIdsOnFork() public {

@@ -3,19 +3,14 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import "../src/ChildAgent.sol";
-import "../src/LineageRegistry.sol";
 import "../src/SpawnFactory.sol";
 
 contract Deploy is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address deployer = vm.addr(deployerKey);
+        // Broadcast is signed by the external Forge wallet, e.g. --account myaccount.
+        vm.startBroadcast();
 
-        require(deployer.balance > 0.1 ether, "Deploy: deployer has no MNT for gas");
-
-        // Broadcast is signed with DEPLOYER_PRIVATE_KEY from env.
-        vm.startBroadcast(deployerKey);
-
+        // v2 deployment — adds recordDecisionHash event for on-chain decision proof
         // 1. Deploy ChildAgent implementation (will be cloned for each child)
         ChildAgent childImpl = new ChildAgent();
         require(address(childImpl) != address(0), "Deploy: ChildAgent deploy failed");
@@ -29,28 +24,28 @@ contract Deploy is Script {
 
         console.log("ChildAgent (impl):", address(childImpl));
 
-        // 2. Deploy LineageRegistry
-        LineageRegistry lineageRegistry = new LineageRegistry();
-        require(address(lineageRegistry) != address(0), "Deploy: LineageRegistry deploy failed");
-        // Deployer is auto-allowed. Call allowCaller(parentEOA) if parent EOA differs from deployer.
-        console.log("LineageRegistry:", address(lineageRegistry));
+        // 2. Reuse existing LineageRegistry so lineage history stays intact.
+        address lineageRegistryAddress = vm.envAddress("LINEAGE_REGISTRY_ADDRESS");
+        require(lineageRegistryAddress != address(0), "Deploy: zero LineageRegistry");
+        require(lineageRegistryAddress.code.length > 0, "Deploy: LineageRegistry has no code");
+        console.log("LineageRegistry:", lineageRegistryAddress);
 
         // 3. Deploy SpawnFactory
-        SpawnFactory factory = new SpawnFactory(address(childImpl), address(lineageRegistry));
+        SpawnFactory factory = new SpawnFactory(address(childImpl), lineageRegistryAddress);
         require(address(factory) != address(0), "Deploy: SpawnFactory deploy failed");
         console.log("SpawnFactory:", address(factory));
 
         vm.stopBroadcast();
 
         console.log("\n=== Mantle Spawn Protocol - Phase 1 Deploy ===");
-        console.log("Deployer:         ", deployer);
+        console.log("Signer:           external Forge wallet");
         console.log("ChildAgent (impl):", address(childImpl));
-        console.log("LineageRegistry:  ", address(lineageRegistry));
+        console.log("LineageRegistry:  ", lineageRegistryAddress);
         console.log("SpawnFactory:     ", address(factory));
         console.log("ERC-8004 Registry:", 0x8004A818BFB912233c491871b3d84c89A494BD9e);
         console.log("\n=== Add these to .env ===");
         console.log("SPAWN_FACTORY_ADDRESS=", address(factory));
-        console.log("LINEAGE_REGISTRY_ADDRESS=", address(lineageRegistry));
+        console.log("LINEAGE_REGISTRY_ADDRESS=", lineageRegistryAddress);
         console.log("CHILD_AGENT_IMPLEMENTATION=", address(childImpl));
         console.log("========================");
     }

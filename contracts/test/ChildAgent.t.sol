@@ -6,6 +6,7 @@ import "../src/ChildAgent.sol";
 
 contract ChildAgentTest is Test {
     event RecallChild(address indexed child, string reason, string ipfsCid, uint256 timestamp);
+    event AgentDecisionExecuted(bytes32 indexed decisionHash, string actionType, uint256 amountBps, uint256 timestamp);
 
     ChildAgent internal agent;
     address internal parent = makeAddr("parent");
@@ -65,6 +66,26 @@ contract ChildAgentTest is Test {
         agent.recallChild("below threshold", "QmCID1");
     }
 
+    function test_RecordDecisionHash_EmitsEventForParent() public {
+        agent.initialize(parent, wallet);
+        vm.warp(1_700_000_250);
+        bytes32 decisionHash = keccak256("venice decision payload");
+
+        vm.expectEmit(true, false, false, true);
+        emit AgentDecisionExecuted(decisionHash, "AAVE_SUPPLY_USDE", 2_500, block.timestamp);
+
+        vm.prank(parent);
+        agent.recordDecisionHash(decisionHash, "AAVE_SUPPLY_USDE", 2_500);
+    }
+
+    function test_RecordDecisionHash_RevertsForNonParent() public {
+        agent.initialize(parent, wallet);
+
+        vm.prank(nonParent);
+        vm.expectRevert(bytes("Only parent"));
+        agent.recordDecisionHash(keccak256("venice decision payload"), "AAVE_SUPPLY_USDE", 2_500);
+    }
+
     function test_RecallChild_EventContainsIpfsCid() public {
         agent.initialize(parent, wallet);
 
@@ -84,5 +105,12 @@ contract ChildAgentTest is Test {
         assertFalse(agent.active());
         assertEq(agent.parent(), parent);
         assertEq(agent.wallet(), wallet);
+    }
+
+    function test_RecallChild_RevertsIfAlreadyRecalled() public {
+        agent.initialize(address(this), wallet);
+        agent.recallChild("reason", "QmCID1234567890123456789012345678901234567");
+        vm.expectRevert("ChildAgent: already recalled");
+        agent.recallChild("reason2", "QmCID2345678901234567890123456789012345678");
     }
 }
