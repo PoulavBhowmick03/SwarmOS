@@ -6,7 +6,7 @@ import { useGenerationStats } from "@/hooks/useSwarmData";
 import { formatPct } from "@/lib/mantle";
 
 export default function LineagePage() {
-  const { generations, loading, error } = useGenerationStats();
+  const { generations, loading, error, isMockData } = useGenerationStats();
   const first = generations[0];
   const latest = generations[generations.length - 1];
 
@@ -25,7 +25,14 @@ export default function LineagePage() {
         </p>
       </section>
 
-      {error ? (
+      {isMockData && (
+        <div className="bg-amber-900/30 border border-amber-600/50 text-amber-300 px-4 py-2 text-xs rounded font-mono flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />
+          Demo data — live swarm not connected. Deploy agent backend and set NEXT_PUBLIC_API_URL to connect.
+        </div>
+      )}
+
+      {error && !isMockData ? (
         <div className="rounded-[28px] border border-rose-200/15 bg-rose-500/10 p-6 text-sm text-rose-100">
           Failed to load generation data: {error}
         </div>

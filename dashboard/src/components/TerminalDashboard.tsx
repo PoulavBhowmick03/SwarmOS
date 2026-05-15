@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { AgentCard } from "@/components/AgentCard";
+import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
+import { AgentLivePanel } from "@/components/AgentLivePanel";
+import { AgentTerminalFeed } from "@/components/AgentTerminalFeed";
 import { GenerationChart } from "@/components/GenerationChart";
+import { OnChainEvidence } from "@/components/OnChainEvidence";
 import { TerminationEvent } from "@/components/TerminationEvent";
 import { LineageTree } from "@/components/LineageTree";
 import { useSwarmData, useSwarmEvents, useGenerationStats } from "@/hooks/useSwarmData";
@@ -19,6 +22,17 @@ const FILTER_MAP: Record<FilterId, string | null> = {
   TERMINATION: "TERMINATION",
   RESPAWN:     "RESPAWN",
 };
+
+function timeAgo(epochMs: number): string {
+  if (!epochMs) return "—";
+  const diff = Date.now() - epochMs;
+  const d = Math.floor(diff / 86_400_000);
+  const h = Math.floor((diff % 86_400_000) / 3_600_000);
+  const m = Math.floor((diff % 3_600_000) / 60_000);
+  if (d > 0) return `${d}d ${h}h ago`;
+  if (h > 0) return `${h}h ${m}m ago`;
+  return `${m}m ago`;
+}
 
 function fmtTs(ts: string): string {
   try {
@@ -74,9 +88,9 @@ export default function SpawnDashboard() {
   const [eventFilter, setEventFilter] = useState<FilterId>("ALL");
   const [chartKey, setChartKey]       = useState(0);
 
-  const { children }    = useSwarmData();
-  const { events }      = useSwarmEvents();
-  const { generations } = useGenerationStats();
+  const { children, isMockData, swarmStartTime, cycleCount } = useSwarmData();
+  const { events }                  = useSwarmEvents();
+  const { generations }             = useGenerationStats();
 
   const switchTab = (tab: TabId) => {
     setActiveTab(tab);
@@ -108,11 +122,29 @@ export default function SpawnDashboard() {
   const recalled  = children.filter((c) => c.status === "TERMINATED");
   const latestGen = generations[generations.length - 1];
   const firstGen  = generations[0];
-  const avgYieldDisplay = latestGen ? latestGen.avgYieldPct.toFixed(2) + "%" : "8.61%";
+  const avgYieldDisplay = latestGen ? latestGen.avgYieldPct.toFixed(2) + "%" : "—";
   const deltaDisplay    = latestGen && firstGen && latestGen !== firstGen
     ? `▲ +${(latestGen.avgYieldPct - firstGen.avgYieldPct).toFixed(2)}%`
-    : "▲ +2.30%";
-  const deltaVs = firstGen ? `vs Gen ${firstGen.generation} (${firstGen.avgYieldPct.toFixed(2)}%)` : "vs Gen 0 (6.31%)";
+    : "—";
+  const deltaVs = firstGen ? `vs Gen ${firstGen.generation} (${firstGen.avgYieldPct.toFixed(2)}%)` : "—";
+
+  // Live-computed stats
+  const totalConstraints = events
+    .filter((e) => e.type === "TERMINATION")
+    .reduce((sum, e) => sum + (e.inheritanceConstraints?.length ?? 0), 0);
+
+  const prevActiveRef = useRef(active.length);
+  const [activeDelta, setActiveDelta] = useState(0);
+  useEffect(() => {
+    const delta = active.length - prevActiveRef.current;
+    if (delta !== 0) setActiveDelta(delta);
+    prevActiveRef.current = active.length;
+  }, [active.length]);
+
+  // Lineage tree stats for usde-yield-agent-0
+  const l0 = children.filter((c) => c.lineageKey === "usde-yield-agent-0");
+  const l0Depth = l0.reduce((max, c) => Math.max(max, c.generation), 0);
+  const l0Terminated = l0.filter((c) => c.status === "TERMINATED").length;
 
   return (
     <>
@@ -130,11 +162,23 @@ export default function SpawnDashboard() {
             {tab === "overview" ? "Swarm Overview" : tab === "judge" ? "Judge Flow" : "Lineage"}
           </button>
         ))}
+        <Link href="/community" className="tab" style={{ marginLeft: "auto", textDecoration: "none" }}>
+          <span className="num">↗</span>Community Swarm
+        </Link>
       </nav>
 
       {/* ──────────────────────────────── TAB 1: OVERVIEW */}
       {activeTab === "overview" && (
         <div key="overview" className="tab-view">
+          {isMockData && (
+            <div className="bg-amber-900/30 border border-amber-600/50 text-amber-300 px-4 py-2 text-xs rounded mb-4 font-mono flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />
+              Demo data — live swarm not connected. Deploy agent backend and set NEXT_PUBLIC_API_URL to connect.
+            </div>
+          )}
+
+          <OnChainEvidence />
+
           <div className="sec-head">
             <h1 className="sec-title">Active Swarm</h1>
             <span className="sec-sub">{active.length} active · {recalled.length} recalled</span>
@@ -144,20 +188,24 @@ export default function SpawnDashboard() {
             <div className="stat" data-tone="green">
               <span className="corner">01</span>
               <div className="label">Active Agents</div>
-              <div className="value">{active.length || 5}</div>
-              <div className="delta"><span className="v">+1</span><span>since last cycle</span></div>
+              <div className="value">{active.length}</div>
+              <div className="delta">
+                {activeDelta !== 0
+                  ? <><span className="v">{activeDelta > 0 ? `+${activeDelta}` : activeDelta}</span><span>since last poll</span></>
+                  : <span>cycle {cycleCount}</span>}
+              </div>
             </div>
             <div className="stat" data-tone="blue">
               <span className="corner">02</span>
               <div className="label">Generations</div>
-              <div className="value">{generations.length || 3}</div>
-              <div className="delta"><span>seeded 14d 06h ago</span></div>
+              <div className="value">{generations.length || children.reduce((m, c) => Math.max(m, c.generation), 0)}</div>
+              <div className="delta"><span>{swarmStartTime ? `seeded ${timeAgo(swarmStartTime)}` : "—"}</span></div>
             </div>
             <div className="stat" data-tone="red">
               <span className="corner">03</span>
               <div className="label">Recalled</div>
-              <div className="value">{recalled.length || 7}</div>
-              <div className="delta"><span>21 constraints inherited</span></div>
+              <div className="value">{recalled.length}</div>
+              <div className="delta"><span>{totalConstraints > 0 ? `${totalConstraints} constraints inherited` : `${recalled.length} terminations`}</span></div>
             </div>
             <div className="stat" data-tone="green">
               <span className="corner">04</span>
@@ -170,12 +218,67 @@ export default function SpawnDashboard() {
             </div>
           </div>
 
-          <div className="eyebrow">Population · {children.length || 6} agents</div>
-          <div className="agents">
-            {children.map((child) => (
-              <AgentCard key={`${child.contractAddress}-${child.generation}`} child={child} />
-            ))}
+          {/* ── Active agents with live decision feed ── */}
+          <div className="eyebrow" style={{ marginTop: 24 }}>
+            Active Agents · {active.length} running
           </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+            {active.length === 0 ? (
+              <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink-3)", padding: "16px 0" }}>
+                No active agents — swarm is respawning…
+              </div>
+            ) : (
+              active.map((child) => (
+                <AgentLivePanel
+                  key={`${child.contractAddress}-${child.generation}`}
+                  agent={child}
+                  events={events}
+                />
+              ))
+            )}
+          </div>
+
+          {/* ── Live decision terminal ── */}
+          <div className="eyebrow" style={{ marginTop: 28 }}>
+            Agent Decision Log · live feed
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <AgentTerminalFeed events={events} />
+          </div>
+
+          {/* ── Terminated footer ── */}
+          {recalled.length > 0 && (
+            <div style={{
+              marginTop: 16,
+              padding: "10px 14px",
+              background: "var(--card)",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              fontFamily: "var(--mono)",
+              fontSize: 11,
+              color: "var(--ink-3)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}>
+              <span>
+                <span style={{ color: "var(--crimson)" }}>●</span>
+                {" "}{recalled.length} terminated agents
+                {totalConstraints > 0 && ` · ${totalConstraints} constraints emitted`}
+              </span>
+              <button
+                onClick={() => switchTab("judge")}
+                style={{
+                  background: "none", border: "1px solid var(--border)",
+                  color: "var(--ink-2)", fontFamily: "var(--mono)", fontSize: 10,
+                  padding: "3px 10px", borderRadius: 4, cursor: "pointer",
+                  letterSpacing: "0.06em",
+                }}
+              >
+                View in Judge Flow →
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -245,8 +348,8 @@ export default function SpawnDashboard() {
                 </div>
               </div>
               <div className="tree-key">
-                depth <span className="v">3</span> · descendants{" "}
-                <span className="v">3</span> · terminated <span className="v">2</span>
+                depth <span className="v">{l0Depth || "—"}</span> · descendants{" "}
+                <span className="v">{l0.length || "—"}</span> · terminated <span className="v">{l0Terminated || "—"}</span>
               </div>
             </div>
             <div className="tree-svg-wrap">

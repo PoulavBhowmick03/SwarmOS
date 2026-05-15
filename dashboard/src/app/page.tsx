@@ -1,7 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { API_BASE } from "@/lib/mantle";
+
+type LandingStats = {
+  totalGenerations: number;
+  totalRecalled: number;
+  latestYield: number;
+  improvement: number;
+};
+
+async function fetchLandingStats(): Promise<LandingStats | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/generations`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return null;
+    const body = await res.json();
+    const gens: { avgYieldPct: number; agentsTerminated: number }[] = body.generations ?? [];
+    if (gens.length === 0) return null;
+    const first = gens[0];
+    const last = gens[gens.length - 1];
+    const totalRecalled = gens.reduce((a, g) => a + g.agentsTerminated, 0);
+    return {
+      totalGenerations: gens.length,
+      totalRecalled,
+      latestYield: last.avgYieldPct,
+      improvement: last.avgYieldPct - first.avgYieldPct,
+    };
+  } catch {
+    return null;
+  }
+}
 
 async function copyText(text: string) {
   try {
@@ -36,6 +67,13 @@ function CopyBtn({ address }: { address: string }) {
 
 export default function LandingPage() {
   const [block, setBlock] = useState(76_418_902);
+  const [stats, setStats] = useState<LandingStats | null>(null);
+  const animatedRef = useRef(false);
+
+  // fetch live stats once
+  useEffect(() => {
+    fetchLandingStats().then(setStats);
+  }, []);
 
   // nav scroll state
   useEffect(() => {
@@ -54,10 +92,15 @@ export default function LandingPage() {
     return () => clearInterval(id);
   }, []);
 
-  // hero counter animation
+  // hero counter animation — runs only when stats resolve
   useEffect(() => {
+    if (stats === null) return;
+    if (animatedRef.current) return;
+    animatedRef.current = true;
+
     function easeOut(t: number) { return 1 - Math.pow(1 - t, 3); }
     const els = document.querySelectorAll<HTMLElement>("[data-counter]");
+    if (els.length === 0) return;
     const start = performance.now();
     const dur = 1200;
     function step(now: number) {
@@ -75,14 +118,15 @@ export default function LandingPage() {
       if (t < 1) requestAnimationFrame(step);
     }
     requestAnimationFrame(step);
-  }, []);
+  }, [stats]);
 
   // scroll-driven reveals: benchmark, chart, titles, loop, novel grid
   useEffect(() => {
-    // benchmark line
-    const BENCH_PCT = (7.47 / 11) * 100;
+    // benchmark line — position driven by CSS `data-bench-pct` on nearest `.track`, falling back to mid-range
     document.querySelectorAll<HTMLElement>(".bench").forEach((b) => {
-      b.style.left = BENCH_PCT + "%";
+      const track = b.closest(".track") as HTMLElement | null;
+      const pct = track?.dataset.benchPct ?? "68";
+      b.style.left = pct + "%";
     });
 
     // chart bars reveal
@@ -200,23 +244,39 @@ export default function LandingPage() {
           <div className="hero-stats">
             <div className="hstat">
               <div className="lab">Generations</div>
-              <div className="val" data-counter="3" data-format="int">0</div>
-              <div className="sub">seeded 14d 06h ago</div>
+              {stats ? (
+                <div className="val" data-counter={String(stats.totalGenerations)} data-format="int">0</div>
+              ) : (
+                <div className="val">—</div>
+              )}
+              <div className="sub">seeded on Mantle Mainnet</div>
             </div>
             <div className="hstat" data-tone="red">
               <div className="lab">Agents Recalled</div>
-              <div className="val" data-counter="7" data-format="int">0</div>
-              <div className="sub">21 constraints inherited</div>
+              {stats ? (
+                <div className="val" data-counter={String(stats.totalRecalled)} data-format="int">0</div>
+              ) : (
+                <div className="val">—</div>
+              )}
+              <div className="sub">{stats ? `${stats.totalRecalled * 3} constraints inherited` : "live data loading"}</div>
             </div>
             <div className="hstat" data-tone="green">
-              <div className="lab">Avg Yield · Gen 2</div>
-              <div className="val" data-counter="8.61" data-format="pct">0.00%</div>
-              <div className="sub">vs 7.47% benchmark</div>
+              <div className="lab">Avg Yield · Latest Gen</div>
+              {stats ? (
+                <div className="val" data-counter={stats.latestYield.toFixed(2)} data-format="pct">0.00%</div>
+              ) : (
+                <div className="val">—</div>
+              )}
+              <div className="sub">live Aave V3 positions</div>
             </div>
             <div className="hstat" data-tone="green">
               <div className="lab">Improvement</div>
-              <div className="val" data-counter="2.30" data-format="signed">+0.00%</div>
-              <div className="sub">Gen 2 over Gen 0</div>
+              {stats ? (
+                <div className="val" data-counter={stats.improvement.toFixed(2)} data-format="signed">+0.00%</div>
+              ) : (
+                <div className="val">—</div>
+              )}
+              <div className="sub">latest gen over gen 0</div>
             </div>
           </div>
           <div className="cta-row">
@@ -289,32 +349,50 @@ export default function LandingPage() {
             <div>
               <div className="gen-chart" id="gen-chart">
                 <div className="gen-row">
-                  <div className="gen-label">GEN 0<span className="sub">3 spawned</span></div>
-                  <div className="track">
-                    <div className="bench"><span className="lbl">BENCHMARK · 7.47%</span></div>
-                    <div className="bar" data-tone="red" data-yield="6.31"><span className="bar-end">6.31%</span></div>
+                  <div className="gen-label">GEN 0<span className="sub">spawned</span></div>
+                  <div className="track" data-bench-pct="57">
+                    <div className="bench"><span className="lbl">BENCHMARK (Aave APY)</span></div>
+                    <div className="bar" data-tone="red" data-yield="6.31"><span className="bar-end">Gen 0</span></div>
                   </div>
-                  <div className="gen-tail"><span className="pill" data-tone="terminated"><span className="dot" />2 Terminated</span></div>
+                  <div className="gen-tail"><span className="pill" data-tone="terminated"><span className="dot" />Terminated</span></div>
                 </div>
                 <div className="gen-row">
-                  <div className="gen-label">GEN 1<span className="sub">4 spawned</span></div>
-                  <div className="track">
+                  <div className="gen-label">GEN 1<span className="sub">spawned</span></div>
+                  <div className="track" data-bench-pct="57">
                     <div className="bench" />
-                    <div className="bar" data-tone="amber" data-yield="7.12"><span className="bar-end">7.12%</span></div>
+                    <div className="bar" data-tone="amber" data-yield="7.12"><span className="bar-end">Gen 1</span></div>
                   </div>
-                  <div className="gen-tail"><span className="pill" data-tone="terminated"><span className="dot" />3 Terminated</span></div>
+                  <div className="gen-tail"><span className="pill" data-tone="terminated"><span className="dot" />Terminated</span></div>
                 </div>
                 <div className="gen-row">
-                  <div className="gen-label">GEN 2<span className="sub">5 spawned</span></div>
-                  <div className="track">
+                  <div className="gen-label">GEN {stats ? stats.totalGenerations : "N"}<span className="sub">latest</span></div>
+                  <div className="track" data-bench-pct="57">
                     <div className="bench" />
-                    <div className="bar" data-tone="green" data-yield="8.61"><span className="bar-end">8.61%</span></div>
+                    <div
+                      className="bar"
+                      data-tone="green"
+                      data-yield={stats ? String(Math.min(stats.latestYield, 11)) : "7.5"}
+                    >
+                      <span className="bar-end">
+                        {stats ? stats.latestYield.toFixed(2) + "%" : "Live →"}
+                      </span>
+                    </div>
                   </div>
-                  <div className="gen-tail"><span className="pill" data-tone="active"><span className="dot" />5 Active</span></div>
+                  <div className="gen-tail"><span className="pill" data-tone="active"><span className="dot" />Active</span></div>
                 </div>
                 <div className="callout">
-                  <p className="h">Generation 2 outperforms Generation 0 by <span className="pos">+2.30%</span> risk-adjusted yield.</p>
-                  <p className="s"><span className="num">7</span> terminations produced <span className="num">21</span> inherited constraints across the lineage.</p>
+                  <p className="h">
+                    {stats
+                      ? <>Latest gen outperforms gen 0 by <span className="pos">+{stats.improvement.toFixed(2)}%</span> avg yield.</>
+                      : "Generational performance improves through inherited failure constraints."}
+                  </p>
+                  <p className="s">
+                    {stats ? (
+                      <><span className="num">{stats.totalRecalled}</span> terminations produced <span className="num">{stats.totalRecalled * 3}</span> inherited constraints across the lineage.</>
+                    ) : (
+                      "Connect a live swarm to see real-time performance data."
+                    )}
+                  </p>
                 </div>
               </div>
             </div>
@@ -324,8 +402,8 @@ export default function LandingPage() {
                 {[
                   {
                     name: "SpawnFactory",
-                    addr: "0x73060181a87703C72dB3b147413c80de40576FB8",
-                    href: "https://mantlescan.xyz/address/0x73060181a87703c72db3b147413c80de40576fb8",
+                    addr: "0x94171e5D54792149E14fFa19197e3c17E263C740",
+                    href: "https://mantlescan.xyz/address/0x94171e5d54792149e14ffa19197e3c17e263c740",
                   },
                   {
                     name: "LineageRegistry",
@@ -334,8 +412,8 @@ export default function LandingPage() {
                   },
                   {
                     name: "ChildAgent (impl)",
-                    addr: "0x289390469925E953545Ccc96a13D0b5408A835c0",
-                    href: "https://mantlescan.xyz/address/0x289390469925e953545ccc96a13d0b5408a835c0",
+                    addr: "0xD2d79F4A19E0D77267aBe80d85c33630d0923F72",
+                    href: "https://mantlescan.xyz/address/0xd2d79f4a19e0d77267abe80d85c33630d0923f72",
                   },
                 ].map((c) => (
                   <div className="contract-card" key={c.name}>
@@ -431,9 +509,9 @@ export default function LandingPage() {
             <Link className="btn btn-lg" href="/terminal">Launch Live Swarm →</Link>
           </div>
           <div className="chip-row">
-            <a className="chip" href="https://mantlescan.xyz/address/0x73060181a87703c72db3b147413c80de40576fb8" target="_blank" rel="noopener noreferrer">SpawnFactory 0x7306…FB8</a>
+            <a className="chip" href="https://mantlescan.xyz/address/0x94171e5d54792149e14ffa19197e3c17e263c740" target="_blank" rel="noopener noreferrer">SpawnFactory 0x9417…C740</a>
             <a className="chip" href="https://mantlescan.xyz/address/0x0466c58d7955cfdfa9e2070077d2f5e26561b59e" target="_blank" rel="noopener noreferrer">LineageRegistry 0x0466…59E</a>
-            <a className="chip" href="https://mantlescan.xyz/address/0x289390469925e953545ccc96a13d0b5408a835c0" target="_blank" rel="noopener noreferrer">ChildAgent 0x2893…5c0</a>
+            <a className="chip" href="https://mantlescan.xyz/address/0xd2d79f4a19e0d77267abe80d85c33630d0923f72" target="_blank" rel="noopener noreferrer">ChildAgent 0xD2d7…3F72</a>
           </div>
         </div>
       </section>

@@ -5,14 +5,8 @@ import type { GenerationStat } from "@/types";
 
 type Props = { data: GenerationStat[] };
 
-const BENCH = 7.47;
 const MAX_YIELD = 11;
-const BENCH_PCT = `${(BENCH / MAX_YIELD) * 100}%`;
-
 const TONES: ("red" | "amber" | "green")[] = ["red", "amber", "green"];
-const SPAWNED = [3, 4, 5];
-const TERMINATED_LABELS = ["2 TERMINATED", "3 TERMINATED", "5 ACTIVE"];
-const TERMINATED_TONES: ("terminated" | "active")[] = ["terminated", "terminated", "active"];
 
 export function GenerationChart({ data }: Props) {
   const [animated, setAnimated] = useState(false);
@@ -24,12 +18,17 @@ export function GenerationChart({ data }: Props) {
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
-  const gens = data.length > 0 ? data : [
-    { generation: 0, avgYieldPct: 6.31, agentCount: 3, terminatedCount: 2, benchmarkYieldPct: BENCH, avgRiskAdjustedScore: -0.89 },
-    { generation: 1, avgYieldPct: 7.12, agentCount: 4, terminatedCount: 3, benchmarkYieldPct: BENCH, avgRiskAdjustedScore: -0.55 },
-    { generation: 2, avgYieldPct: 8.61, agentCount: 5, terminatedCount: 0, benchmarkYieldPct: BENCH, avgRiskAdjustedScore:  1.36 },
-  ];
+  if (data.length === 0) {
+    return (
+      <div className="gen-chart flex items-center justify-center py-12 text-sm font-mono text-slate-400">
+        No generation data yet — swarm has not completed a full cycle.
+      </div>
+    );
+  }
 
+  const gens = data;
+  const bench = gens[0]?.benchmarkYieldPct ?? 4.5;
+  const benchPct = `${(bench / MAX_YIELD) * 100}%`;
   const first = gens[0];
   const last  = gens[gens.length - 1];
   const improvement = (last.avgYieldPct - first.avgYieldPct).toFixed(2);
@@ -50,15 +49,15 @@ export function GenerationChart({ data }: Props) {
           <div key={g.generation} className="gen-row">
             <div className="gen-label">
               GEN {g.generation}
-              <span className="sub">{SPAWNED[i] ?? g.agentCount} spawned</span>
+              <span className="sub">{g.agentCount} spawned</span>
             </div>
             <div className="track">
               {i === 0 && (
-                <div className="bench" style={{ left: BENCH_PCT }}>
-                  <span className="lbl">BENCHMARK · {BENCH}%</span>
+                <div className="bench" style={{ left: benchPct }}>
+                  <span className="lbl">BENCHMARK · {bench.toFixed(2)}%</span>
                 </div>
               )}
-              {i > 0 && <div className="bench" style={{ left: BENCH_PCT }} />}
+              {i > 0 && <div className="bench" style={{ left: benchPct }} />}
               <div
                 className="bar"
                 data-tone={tone}

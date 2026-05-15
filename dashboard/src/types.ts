@@ -30,6 +30,10 @@ export type SwarmEvent = {
   contractAddress?: string;
   currentYieldPct?: number;
   actionTaken?: string;
+  rationale?: string;
+  positionSummary?: string;
+  decisionHash?: string;
+  amountBps?: number;
   failureReason?: string;
   ipfsCid?: string;
   recallTxHash?: string;
