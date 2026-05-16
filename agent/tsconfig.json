@@ -13,6 +13,7 @@
   },
   "include": [
     "src/aave.ts",
+    "src/backtest.ts",
     "src/abis.ts",
     "src/chain.ts",
     "src/child.ts",
